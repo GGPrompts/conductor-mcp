@@ -22,13 +22,120 @@ mcp = FastMCP("conductor")
 # Configuration
 STATE_DIR = Path("/tmp/claude-code-state")
 AUDIO_CACHE_DIR = Path("/tmp/conductor-audio-cache")
+CONFIG_DIR = Path.home() / ".config" / "conductor-mcp"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+
+# Defaults (used in function signatures)
 DEFAULT_DELAY_MS = 800
-DEFAULT_VOICE = "en-US-AriaNeural"
-DEFAULT_RATE = "+0%"
 
 # Ensure directories exist
 STATE_DIR.mkdir(exist_ok=True)
 AUDIO_CACHE_DIR.mkdir(exist_ok=True)
+CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+# Available edge-tts voices (good variety for distinguishing workers)
+VOICE_POOL = [
+    "en-US-AriaNeural",      # Female, conversational
+    "en-US-GuyNeural",       # Male, conversational
+    "en-US-JennyNeural",     # Female, assistant
+    "en-US-DavisNeural",     # Male, calm
+    "en-US-AmberNeural",     # Female, warm
+    "en-US-AndrewNeural",    # Male, confident
+    "en-US-EmmaNeural",      # Female, friendly
+    "en-US-BrianNeural",     # Male, professional
+    "en-US-AnaNeural",       # Female, child-like
+    "en-US-ChristopherNeural", # Male, reliable
+    "en-GB-SoniaNeural",     # British female
+    "en-GB-RyanNeural",      # British male
+    "en-AU-NatashaNeural",   # Australian female
+    "en-AU-WilliamNeural",   # Australian male
+]
+
+# Default configuration
+DEFAULT_CONFIG = {
+    "max_concurrent_workers": 4,
+    "default_layout": "2x2",
+    "voice": {
+        "default": "en-US-AriaNeural",
+        "rate": "+0%",
+        "pitch": "+0Hz",
+        "random_per_worker": True,
+    },
+    "delays": {
+        "send_prompt_ms": 800,
+        "claude_boot_s": 4,
+    },
+    "worker_voice_assignments": {},  # worker_id -> voice
+    "voice_pool_index": 0,  # Tracks which voice to assign next
+}
+
+
+def load_config() -> dict:
+    """Load config from file, creating default if needed."""
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE) as f:
+                config = json.load(f)
+                # Merge with defaults for any missing keys
+                for key, value in DEFAULT_CONFIG.items():
+                    if key not in config:
+                        config[key] = value
+                return config
+        except (json.JSONDecodeError, IOError):
+            pass
+    return DEFAULT_CONFIG.copy()
+
+
+def save_config(config: dict) -> None:
+    """Save config to file."""
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=2)
+
+
+def get_worker_voice(worker_id: str) -> str:
+    """Get or assign a unique voice for a worker."""
+    config = load_config()
+
+    if not config["voice"]["random_per_worker"]:
+        return config["voice"]["default"]
+
+    assignments = config.get("worker_voice_assignments", {})
+
+    # Already assigned?
+    if worker_id in assignments:
+        return assignments[worker_id]
+
+    # Find next unused voice
+    used_voices = set(assignments.values())
+    pool_index = config.get("voice_pool_index", 0)
+
+    # Try to find an unused voice, cycling through pool
+    for i in range(len(VOICE_POOL)):
+        voice = VOICE_POOL[(pool_index + i) % len(VOICE_POOL)]
+        if voice not in used_voices:
+            assignments[worker_id] = voice
+            config["worker_voice_assignments"] = assignments
+            config["voice_pool_index"] = (pool_index + i + 1) % len(VOICE_POOL)
+            save_config(config)
+            return voice
+
+    # All voices used, cycle through anyway
+    voice = VOICE_POOL[pool_index % len(VOICE_POOL)]
+    assignments[worker_id] = voice
+    config["worker_voice_assignments"] = assignments
+    config["voice_pool_index"] = (pool_index + 1) % len(VOICE_POOL)
+    save_config(config)
+    return voice
+
+
+def release_worker_voice(worker_id: str) -> None:
+    """Release a worker's voice assignment when killed."""
+    config = load_config()
+    assignments = config.get("worker_voice_assignments", {})
+    if worker_id in assignments:
+        del assignments[worker_id]
+        config["worker_voice_assignments"] = assignments
+        save_config(config)
 
 
 @mcp.tool()
@@ -175,8 +282,9 @@ When done:
 @mcp.tool()
 async def speak(
     text: str,
-    voice: str = DEFAULT_VOICE,
-    rate: str = DEFAULT_RATE,
+    voice: Optional[str] = None,
+    rate: Optional[str] = None,
+    worker_id: Optional[str] = None,
     blocking: bool = False
 ) -> str:
     """
@@ -184,13 +292,27 @@ async def speak(
 
     Args:
         text: Text to speak
-        voice: Edge TTS voice (default: en-US-AriaNeural)
+        voice: Edge TTS voice (default from config, or worker's assigned voice)
         rate: Speech rate (e.g., "+0%", "+20%", "-10%")
+        worker_id: If provided, uses this worker's unique assigned voice
         blocking: Wait for speech to complete (default: False)
 
     Returns:
         Confirmation message
     """
+    config = load_config()
+
+    # Determine voice
+    if voice is None:
+        if worker_id:
+            voice = get_worker_voice(worker_id)
+        else:
+            voice = config["voice"]["default"]
+
+    # Determine rate
+    if rate is None:
+        rate = config["voice"]["rate"]
+
     # Generate cache key
     cache_key = hashlib.md5(f"{voice}:{rate}:{text}".encode()).hexdigest()
     cache_file = AUDIO_CACHE_DIR / f"{cache_key}.mp3"
@@ -264,6 +386,9 @@ def kill_worker(session: str, cleanup_worktree: bool = False) -> str:
     if state_file.exists():
         state_file.unlink()
         messages.append("Removed state file")
+
+    # Release voice assignment
+    release_worker_voice(session)
 
     return "; ".join(messages)
 
@@ -724,6 +849,128 @@ When done:
 
 
 # ═══════════════════════════════════════════════════════════════
+# CONFIGURATION TOOLS
+# ═══════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def get_config() -> dict:
+    """
+    Get current conductor configuration.
+
+    Returns config including:
+    - max_concurrent_workers
+    - default_layout
+    - voice settings (default voice, rate, pitch, random_per_worker)
+    - delay settings
+    - current worker voice assignments
+    """
+    return load_config()
+
+
+@mcp.tool()
+def set_config(
+    max_concurrent_workers: Optional[int] = None,
+    default_layout: Optional[str] = None,
+    default_voice: Optional[str] = None,
+    voice_rate: Optional[str] = None,
+    voice_pitch: Optional[str] = None,
+    random_voices: Optional[bool] = None,
+    send_prompt_delay_ms: Optional[int] = None,
+    claude_boot_delay_s: Optional[int] = None
+) -> dict:
+    """
+    Update conductor configuration.
+
+    Args:
+        max_concurrent_workers: Max workers to spawn (default: 4)
+        default_layout: Default grid layout (default: "2x2")
+        default_voice: Default TTS voice
+        voice_rate: Speech rate (e.g., "+0%", "+20%", "-10%")
+        voice_pitch: Voice pitch (e.g., "+0Hz", "+50Hz")
+        random_voices: Assign unique voices per worker (default: True)
+        send_prompt_delay_ms: Delay before Enter key (default: 800)
+        claude_boot_delay_s: Wait time for Claude to boot (default: 4)
+
+    Returns:
+        Updated config
+    """
+    config = load_config()
+
+    if max_concurrent_workers is not None:
+        config["max_concurrent_workers"] = max_concurrent_workers
+    if default_layout is not None:
+        config["default_layout"] = default_layout
+    if default_voice is not None:
+        config["voice"]["default"] = default_voice
+    if voice_rate is not None:
+        config["voice"]["rate"] = voice_rate
+    if voice_pitch is not None:
+        config["voice"]["pitch"] = voice_pitch
+    if random_voices is not None:
+        config["voice"]["random_per_worker"] = random_voices
+    if send_prompt_delay_ms is not None:
+        config["delays"]["send_prompt_ms"] = send_prompt_delay_ms
+    if claude_boot_delay_s is not None:
+        config["delays"]["claude_boot_s"] = claude_boot_delay_s
+
+    save_config(config)
+    return config
+
+
+@mcp.tool()
+def list_voices() -> list[dict]:
+    """
+    List available TTS voices with current assignments.
+
+    Returns list of voices showing which are assigned to workers.
+    """
+    config = load_config()
+    assignments = config.get("worker_voice_assignments", {})
+
+    # Reverse mapping: voice -> worker
+    voice_to_worker = {v: k for k, v in assignments.items()}
+
+    voices = []
+    for voice in VOICE_POOL:
+        voices.append({
+            "voice": voice,
+            "assigned_to": voice_to_worker.get(voice),
+            "is_default": voice == config["voice"]["default"]
+        })
+
+    return voices
+
+
+@mcp.tool()
+async def test_voice(voice: str, text: str = "Hello, I am your conductor assistant.") -> str:
+    """
+    Test a specific TTS voice.
+
+    Args:
+        voice: Voice name from list_voices()
+        text: Text to speak (default: greeting)
+
+    Returns:
+        Confirmation
+    """
+    return await speak(text=text, voice=voice, blocking=True)
+
+
+@mcp.tool()
+def reset_voice_assignments() -> str:
+    """
+    Clear all worker voice assignments.
+
+    Use this to reset the voice pool when starting fresh.
+    """
+    config = load_config()
+    config["worker_voice_assignments"] = {}
+    config["voice_pool_index"] = 0
+    save_config(config)
+    return "Voice assignments cleared"
+
+
+# ═══════════════════════════════════════════════════════════════
 # PROMPTS (appear in /slash command menu)
 # ═══════════════════════════════════════════════════════════════
 
@@ -820,6 +1067,94 @@ def prompt_announce(message: str) -> list[dict]:
         {
             "role": "user",
             "content": f"Use the speak() tool to announce: {message}"
+        }
+    ]
+
+
+@mcp.prompt(
+    name="options",
+    title="Conductor Options",
+    description="View and adjust conductor settings (voices, delays, workers)"
+)
+def prompt_options() -> list[dict]:
+    """Prompt to view and modify conductor settings."""
+    return [
+        {
+            "role": "user",
+            "content": """Show conductor configuration and let me adjust settings.
+
+1. First, call get_config() to show current settings
+2. Call list_voices() to show available TTS voices and assignments
+3. Present the settings in a nice format:
+
+**Current Configuration**
+- Max workers: X
+- Default layout: XxX
+- Voice: [name] at [rate] speed
+- Random voices per worker: yes/no
+- Prompt delay: Xms
+- Boot delay: Xs
+
+**Voice Assignments**
+[table of voice -> worker]
+
+**Available Actions**
+- Change max workers
+- Change default voice
+- Adjust voice speed (+20%, -10%, etc.)
+- Toggle random voices
+- Test a voice
+- Reset voice assignments
+
+Ask me what I'd like to change, then use set_config() to apply changes.
+After changes, use speak() to confirm with "Settings updated"."""
+        }
+    ]
+
+
+@mcp.prompt(
+    name="test-voices",
+    title="Test TTS Voices",
+    description="Listen to and compare available TTS voices"
+)
+def prompt_test_voices() -> list[dict]:
+    """Prompt to test different TTS voices."""
+    return [
+        {
+            "role": "user",
+            "content": """Help me pick a TTS voice.
+
+1. Call list_voices() to see available voices
+2. For each voice category (US, UK, Australian), test one with test_voice()
+3. Use a short test phrase that shows personality
+4. After testing, ask which voice I'd like as default
+5. Update config with set_config(default_voice=...)
+
+Good test phrases:
+- "Worker one reporting for duty"
+- "Task complete, moving to next issue"
+- "Warning: context usage at 75 percent" """
+        }
+    ]
+
+
+@mcp.prompt(
+    name="kill-all",
+    title="Kill All Workers",
+    description="Stop all active worker sessions"
+)
+def prompt_kill_all() -> list[dict]:
+    """Prompt to kill all workers."""
+    return [
+        {
+            "role": "user",
+            "content": """Kill all active worker sessions.
+
+1. Call list_workers() to see active sessions
+2. For each worker, call kill_worker(session)
+3. Call reset_voice_assignments() to free up voices
+4. Announce "All workers terminated" with speak()
+5. Report how many workers were killed"""
         }
     ]
 

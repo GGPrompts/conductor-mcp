@@ -210,21 +210,27 @@ async def speak(
         except FileNotFoundError:
             return "edge-tts not found. Install with: pip install edge-tts"
 
-    # Play audio
-    try:
-        if blocking:
-            subprocess.run(
-                ["mpv", "--no-video", "--really-quiet", str(cache_file)],
-                check=True
-            )
-        else:
-            subprocess.Popen(
-                ["mpv", "--no-video", "--really-quiet", str(cache_file)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-    except FileNotFoundError:
-        return f"Audio cached at {cache_file} but mpv not found for playback"
+    # Try multiple audio players in order of preference
+    players = [
+        (["mpv", "--no-video", "--really-quiet", str(cache_file)], "mpv"),
+        (["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(cache_file)], "ffplay"),
+        (["cvlc", "--play-and-exit", "--quiet", str(cache_file)], "vlc"),
+    ]
+
+    played = False
+    for cmd, name in players:
+        try:
+            if blocking:
+                subprocess.run(cmd, check=True, capture_output=True)
+            else:
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            played = True
+            break
+        except FileNotFoundError:
+            continue
+
+    if not played:
+        return f"Audio cached at {cache_file} - install mpv, ffplay, or vlc to play"
 
     return f"Speaking: {text[:50]}{'...' if len(text) > 50 else ''}"
 

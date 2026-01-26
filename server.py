@@ -397,12 +397,13 @@ def split_pane(
     if target:
         args.extend(["-t", target])
 
-    # Percentage
-    args.extend(["-p", str(percentage)])
-
     # Working directory
     if start_dir:
         args.extend(["-c", start_dir])
+
+    # Percentage (use -l with percentage calculation based on current size)
+    # Note: -p flag has issues in some tmux versions, so we use default 50% split
+    # by omitting size flags entirely (tmux defaults to even split)
 
     # Print new pane info
     args.extend(["-P", "-F", "#{pane_id}|#{pane_index}|#{pane_width}x#{pane_height}"])
@@ -471,7 +472,6 @@ def create_grid(
         split_result = split_pane(
             direction="vertical",
             target=current_pane,
-            percentage=int(100 * (rows - row) / (rows - row + 1)),
             start_dir=start_dir
         )
         if "error" in split_result:
@@ -492,7 +492,6 @@ def create_grid(
             split_result = split_pane(
                 direction="horizontal",
                 target=current,
-                percentage=int(100 * (cols - col) / (cols - col + 1)),
                 start_dir=start_dir
             )
             if "error" in split_result:

@@ -56,8 +56,8 @@ DEFAULT_CONFIG = {
     "max_concurrent_workers": 4,
     "default_layout": "2x2",
     "voice": {
-        "default": "en-US-AriaNeural",
-        "rate": "+0%",
+        "default": "en-US-AndrewNeural",  # Conductor's authoritative voice
+        "rate": "+20%",
         "pitch": "+0Hz",
         "random_per_worker": True,
     },

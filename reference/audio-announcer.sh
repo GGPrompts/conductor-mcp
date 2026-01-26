@@ -22,8 +22,38 @@ if [[ -f "$CONFIG_FILE" ]]; then
     source "$CONFIG_FILE"
 fi
 
+# Voice pool for random per-session assignment
+VOICE_POOL=(
+    "en-US-AriaNeural"
+    "en-US-GuyNeural"
+    "en-US-JennyNeural"
+    "en-US-DavisNeural"
+    "en-US-AmberNeural"
+    "en-US-EmmaNeural"
+    "en-US-BrianNeural"
+    "en-GB-SoniaNeural"
+    "en-GB-RyanNeural"
+    "en-AU-NatashaNeural"
+    "en-AU-WilliamNeural"
+)
+
+# Get session-consistent random voice (hash session name to pick from pool)
+get_session_voice() {
+    local session="$1"
+    local hash=$(echo -n "$session" | md5sum | cut -c1-8)
+    local index=$((16#$hash % ${#VOICE_POOL[@]}))
+    echo "${VOICE_POOL[$index]}"
+}
+
 # Apply config with env var overrides
-VOICE="${CLAUDE_VOICE:-${DEFAULT_VOICE:-en-US-AndrewMultilingualNeural}}"
+# If CLAUDE_VOICE is set, use it; otherwise pick random voice per session
+if [[ -n "${CLAUDE_VOICE:-}" ]]; then
+    VOICE="$CLAUDE_VOICE"
+else
+    # Use session name to get consistent random voice
+    SESSION_ID="${CLAUDE_SESSION_ID:-${TMUX_PANE:-$$}}"
+    VOICE=$(get_session_voice "$SESSION_ID")
+fi
 RATE="${CLAUDE_RATE:-${DEFAULT_RATE:-+0%}}"
 PITCH="${CLAUDE_PITCH:-${DEFAULT_PITCH:-+0Hz}}"
 VOLUME="${CLAUDE_VOLUME:-${DEFAULT_VOLUME:-+0%}}"

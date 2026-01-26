@@ -2,17 +2,94 @@
 
 MCP server providing orchestration tools for Claude Code workers.
 
-## Tools
+## Requirements
+
+- **tmux** - Terminal multiplexer (pane/session management)
+- **edge-tts** - Text-to-speech (`pip install edge-tts`)
+- **Audio player** - mpv, ffplay, or vlc for TTS playback
+- **bd** (optional) - Beads CLI for issue tracking integration
+- **git** - For worktree management
+
+## Tools (33 total)
+
+### Core Worker Tools
 
 | Tool | Purpose |
 |------|---------|
-| `send_prompt` | Send text to tmux session with delay for Claude prompt submission |
+| `send_prompt` | Send text to tmux session with delay for prompt submission |
 | `spawn_worker` | Create worktree + tmux session + inject beads context |
 | `speak` | TTS announcements via edge-tts |
 | `kill_worker` | Terminate worker session |
 | `list_workers` | List active tmux sessions |
 | `get_worker_status` | Read Claude state from /tmp/claude-code-state |
 | `capture_worker_output` | Get recent terminal output |
+
+### Session & Window Management
+
+| Tool | Purpose |
+|------|---------|
+| `create_session` | Create new tmux session (for non-tmux contexts like Claude Desktop) |
+| `create_window` | Create new window in existing session |
+
+### Pane Management
+
+| Tool | Purpose |
+|------|---------|
+| `split_pane` | Split current/target pane horizontally or vertically |
+| `create_grid` | Create NxM grid layout (e.g., "2x2", "4x1") |
+| `list_panes` | List all panes with status info |
+| `focus_pane` | Switch focus to specific pane |
+| `kill_pane` | Kill a specific pane |
+| `spawn_worker_in_pane` | Launch worker in existing pane |
+
+### Real-time Monitoring
+
+| Tool | Purpose |
+|------|---------|
+| `watch_pane` | Stream pane output to file via pipe-pane |
+| `stop_watch` | Stop streaming pane output |
+| `read_watch` | Read recent output from watch file |
+
+### Synchronization
+
+| Tool | Purpose |
+|------|---------|
+| `wait_for_signal` | Block until channel receives signal (with timeout) |
+| `send_signal` | Send signal on channel to unblock waiters |
+
+### Popup Notifications
+
+| Tool | Purpose |
+|------|---------|
+| `show_popup` | Display floating popup in tmux |
+| `show_status_popup` | Show worker status summary popup |
+
+### Hooks
+
+| Tool | Purpose |
+|------|---------|
+| `set_pane_hook` | Set command to run on pane events (died, exited, etc.) |
+| `clear_hook` | Remove a previously set hook |
+| `list_hooks` | List active hooks |
+
+### Layout & Resizing
+
+| Tool | Purpose |
+|------|---------|
+| `resize_pane` | Resize pane (absolute or relative) |
+| `zoom_pane` | Toggle fullscreen zoom for pane |
+| `apply_layout` | Apply layout (tiled, even-horizontal, etc.) |
+| `rebalance_panes` | Rebalance panes to equal sizes |
+
+### Configuration
+
+| Tool | Purpose |
+|------|---------|
+| `get_config` | Get current conductor configuration |
+| `set_config` | Update configuration settings |
+| `list_voices` | List available TTS voices with assignments |
+| `test_voice` | Test a specific TTS voice |
+| `reset_voice_assignments` | Clear all worker voice assignments |
 
 ## Key Pattern: The Delay Fix
 

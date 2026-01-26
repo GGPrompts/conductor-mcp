@@ -121,10 +121,8 @@ speak() {
     # Generate if not cached
     if [[ ! -f "$cache_file" ]]; then
         echo "[$(date)] generating audio..." >> "$DEBUG_LOG"
-        edge-tts synthesize -v "$VOICE" -r "$RATE" -p "$PITCH" -l "$VOLUME" \
-            -t "$text" -o "${cache_file%.mp3}" 2>>"$DEBUG_LOG" || { echo "[$(date)] edge-tts failed" >> "$DEBUG_LOG"; return 1; }
-        # edge-tts adds .mp3 extension
-        mv "${cache_file%.mp3}.mp3" "$cache_file" 2>/dev/null || true
+        edge-tts -v "$VOICE" --rate "$RATE" --pitch "$PITCH" --volume "$VOLUME" \
+            -t "$text" --write-media "$cache_file" 2>>"$DEBUG_LOG" || { echo "[$(date)] edge-tts failed" >> "$DEBUG_LOG"; return 1; }
         echo "[$(date)] generated: $(ls -la "$cache_file" 2>&1)" >> "$DEBUG_LOG"
     else
         echo "[$(date)] using cached file" >> "$DEBUG_LOG"

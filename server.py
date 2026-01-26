@@ -279,13 +279,18 @@ When done:
     }
 
 
+# Audio mutex - shared with audio-announcer.sh hooks
+AUDIO_LOCK_FILE = Path("/tmp/claude-audio.lock")
+
+
 @mcp.tool()
 async def speak(
     text: str,
     voice: Optional[str] = None,
     rate: Optional[str] = None,
     worker_id: Optional[str] = None,
-    blocking: bool = False
+    blocking: bool = False,
+    priority: bool = True
 ) -> str:
     """
     Speak text aloud using edge-tts.
@@ -296,10 +301,13 @@ async def speak(
         rate: Speech rate (e.g., "+0%", "+20%", "-10%")
         worker_id: If provided, uses this worker's unique assigned voice
         blocking: Wait for speech to complete (default: False)
+        priority: Wait for audio lock (default: True). Direct calls take priority over hooks.
 
     Returns:
         Confirmation message
     """
+    import fcntl
+
     config = load_config()
 
     # Determine voice
@@ -332,39 +340,75 @@ async def speak(
         except FileNotFoundError:
             return "edge-tts not found. Install with: pip install edge-tts"
 
-    # Try multiple audio players in order of preference
-    players = [
-        (["mpv", "--no-video", "--really-quiet", str(cache_file)], "mpv"),
-        (["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(cache_file)], "ffplay"),
-        (["cvlc", "--play-and-exit", "--quiet", str(cache_file)], "vlc"),
-    ]
-
-    played = False
-    for cmd, name in players:
-        try:
-            if blocking:
-                subprocess.run(cmd, check=True, capture_output=True)
+    # Acquire audio lock (priority=True waits, False skips if busy)
+    lock_fd = None
+    try:
+        lock_fd = open(AUDIO_LOCK_FILE, 'w')
+        if priority:
+            # Wait up to 5 seconds for lock - direct calls take priority
+            for _ in range(50):
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    await asyncio.sleep(0.1)
             else:
-                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            played = True
-            break
-        except FileNotFoundError:
-            continue
+                # Couldn't get lock, proceed anyway for priority calls
+                pass
+        else:
+            # Non-blocking - skip if busy
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return "Audio busy, skipped"
 
-    if not played:
-        return f"Audio cached at {cache_file} - install mpv, ffplay, or vlc to play"
+        # Try multiple audio players in order of preference
+        players = [
+            (["mpv", "--no-video", "--really-quiet", str(cache_file)], "mpv"),
+            (["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(cache_file)], "ffplay"),
+            (["cvlc", "--play-and-exit", "--quiet", str(cache_file)], "vlc"),
+        ]
+
+        played = False
+        for cmd, name in players:
+            try:
+                if blocking or priority:
+                    # Priority calls block to hold lock during playback
+                    subprocess.run(cmd, check=True, capture_output=True)
+                else:
+                    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                played = True
+                break
+            except FileNotFoundError:
+                continue
+
+        if not played:
+            return f"Audio cached at {cache_file} - install mpv, ffplay, or vlc to play"
+
+    finally:
+        if lock_fd:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                lock_fd.close()
+            except:
+                pass
 
     return f"Speaking: {text[:50]}{'...' if len(text) > 50 else ''}"
 
 
 @mcp.tool()
-def kill_worker(session: str, cleanup_worktree: bool = False) -> str:
+def kill_worker(
+    session: str,
+    cleanup_worktree: bool = False,
+    project_dir: Optional[str] = None
+) -> str:
     """
     Kill a worker's tmux session and optionally clean up the worktree.
 
     Args:
-        session: tmux session name
+        session: tmux session name (usually the issue_id like "BD-abc")
         cleanup_worktree: Also remove the git worktree (default: False)
+        project_dir: Project directory (required if cleanup_worktree=True)
 
     Returns:
         Confirmation message
@@ -389,6 +433,27 @@ def kill_worker(session: str, cleanup_worktree: bool = False) -> str:
 
     # Release voice assignment
     release_worker_voice(session)
+
+    # Clean up worktree if requested
+    if cleanup_worktree:
+        if not project_dir:
+            messages.append("Warning: project_dir required for worktree cleanup")
+        else:
+            project_path = Path(project_dir).expanduser().resolve()
+            worktree_path = project_path / ".worktrees" / session
+
+            if worktree_path.exists():
+                result = subprocess.run(
+                    ["git", "-C", str(project_path), "worktree", "remove",
+                     str(worktree_path), "--force"],
+                    capture_output=True, text=True
+                )
+                if result.returncode == 0:
+                    messages.append(f"Removed worktree: {worktree_path}")
+                else:
+                    messages.append(f"Failed to remove worktree: {result.stderr.strip()}")
+            else:
+                messages.append(f"Worktree not found: {worktree_path}")
 
     return "; ".join(messages)
 
@@ -425,8 +490,8 @@ def list_workers() -> list[dict]:
                     with open(state_file) as f:
                         state = json.load(f)
                         status = state.get("status")
-                except:
-                    pass
+                except (json.JSONDecodeError, IOError):
+                    pass  # State file corrupt or unreadable, continue without status
 
             workers.append({
                 "session": name,
@@ -485,6 +550,105 @@ def capture_worker_output(session: str, lines: int = 50) -> str:
         return f"Failed to capture: {result.stderr}"
 
     return result.stdout
+
+
+# ═══════════════════════════════════════════════════════════════
+# SESSION & WINDOW MANAGEMENT
+# ═══════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def create_session(
+    name: str,
+    start_dir: Optional[str] = None,
+    command: Optional[str] = None,
+    attach: bool = False
+) -> dict:
+    """
+    Create a new tmux session.
+
+    Use this to bootstrap a tmux environment from non-tmux contexts
+    (e.g., Claude Desktop) before using other conductor tools.
+
+    Args:
+        name: Session name
+        start_dir: Working directory (default: current)
+        command: Command to run in initial window (default: shell)
+        attach: Whether to attach to session (default: False, detached)
+
+    Returns:
+        Dict with session info
+    """
+    args = ["tmux", "new-session", "-s", name, "-P",
+            "-F", "#{session_id}|#{window_id}|#{pane_id}"]
+
+    if not attach:
+        args.append("-d")  # Detached
+
+    if start_dir:
+        args.extend(["-c", start_dir])
+
+    if command:
+        args.append(command)
+
+    result = subprocess.run(args, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        return {"error": result.stderr.strip()}
+
+    parts = result.stdout.strip().split("|")
+    return {
+        "session": name,
+        "session_id": parts[0] if len(parts) > 0 else None,
+        "window_id": parts[1] if len(parts) > 1 else None,
+        "pane_id": parts[2] if len(parts) > 2 else None,
+        "attached": attach
+    }
+
+
+@mcp.tool()
+def create_window(
+    session: str,
+    name: Optional[str] = None,
+    start_dir: Optional[str] = None,
+    command: Optional[str] = None
+) -> dict:
+    """
+    Create a new window in an existing session.
+
+    Args:
+        session: Target session name
+        name: Window name (optional)
+        start_dir: Working directory (default: inherit from session)
+        command: Command to run (default: shell)
+
+    Returns:
+        Dict with window info
+    """
+    args = ["tmux", "new-window", "-t", session, "-P",
+            "-F", "#{window_id}|#{window_index}|#{pane_id}"]
+
+    if name:
+        args.extend(["-n", name])
+
+    if start_dir:
+        args.extend(["-c", start_dir])
+
+    if command:
+        args.append(command)
+
+    result = subprocess.run(args, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        return {"error": result.stderr.strip()}
+
+    parts = result.stdout.strip().split("|")
+    return {
+        "session": session,
+        "window_id": parts[0] if len(parts) > 0 else None,
+        "window_index": int(parts[1]) if len(parts) > 1 else None,
+        "pane_id": parts[2] if len(parts) > 2 else None,
+        "name": name
+    }
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -684,8 +848,8 @@ def list_panes(session: Optional[str] = None) -> list[dict]:
                     with open(state_file) as f:
                         state = json.load(f)
                         status = state.get("status")
-                except:
-                    pass
+                except (json.JSONDecodeError, IOError):
+                    pass  # State file corrupt or unreadable, continue without status
 
             panes.append({
                 "pane_id": parts[0],
@@ -846,6 +1010,547 @@ When done:
         "branch": branch_name,
         "context_injected": bool(context_text)
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# REAL-TIME MONITORING (pipe-pane)
+# ═══════════════════════════════════════════════════════════════
+
+WATCH_DIR = Path("/tmp/conductor-watch")
+WATCH_DIR.mkdir(exist_ok=True)
+
+
+@mcp.tool()
+def watch_pane(
+    pane_id: str,
+    output_file: Optional[str] = None
+) -> dict:
+    """
+    Start streaming a pane's output to a file for real-time monitoring.
+
+    Uses tmux pipe-pane to capture all output as it happens.
+    Much more efficient than polling capture_pane().
+
+    Args:
+        pane_id: Pane ID (e.g., "%0", "%5")
+        output_file: File path for output (default: /tmp/conductor-watch/{pane_id}.log)
+
+    Returns:
+        Dict with output file path and status
+    """
+    if output_file is None:
+        safe_id = pane_id.replace("%", "pane-")
+        output_file = str(WATCH_DIR / f"{safe_id}.log")
+
+    # Ensure output file exists and is empty
+    Path(output_file).write_text("")
+
+    # Start piping output to file
+    result = subprocess.run(
+        ["tmux", "pipe-pane", "-t", pane_id, f"cat >> {output_file}"],
+        capture_output=True, text=True
+    )
+
+    if result.returncode != 0:
+        return {"error": result.stderr.strip()}
+
+    return {
+        "pane_id": pane_id,
+        "output_file": output_file,
+        "status": "watching"
+    }
+
+
+@mcp.tool()
+def stop_watch(pane_id: str) -> str:
+    """
+    Stop streaming a pane's output.
+
+    Args:
+        pane_id: Pane ID (e.g., "%0", "%5")
+
+    Returns:
+        Confirmation message
+    """
+    # Empty pipe-pane command stops the pipe
+    result = subprocess.run(
+        ["tmux", "pipe-pane", "-t", pane_id],
+        capture_output=True, text=True
+    )
+
+    if result.returncode != 0:
+        return f"Failed to stop watch: {result.stderr.strip()}"
+
+    return f"Stopped watching pane: {pane_id}"
+
+
+@mcp.tool()
+def read_watch(
+    pane_id: str,
+    lines: int = 50,
+    output_file: Optional[str] = None
+) -> str:
+    """
+    Read recent output from a watched pane's log file.
+
+    Args:
+        pane_id: Pane ID (e.g., "%0", "%5")
+        lines: Number of lines from end to read (default: 50)
+        output_file: Custom output file path (default: auto-detected)
+
+    Returns:
+        Recent output from the watch file
+    """
+    if output_file is None:
+        safe_id = pane_id.replace("%", "pane-")
+        output_file = str(WATCH_DIR / f"{safe_id}.log")
+
+    path = Path(output_file)
+    if not path.exists():
+        return f"No watch file found for {pane_id}. Start with watch_pane() first."
+
+    # Read last N lines
+    try:
+        content = path.read_text()
+        all_lines = content.splitlines()
+        return "\n".join(all_lines[-lines:])
+    except Exception as e:
+        return f"Error reading watch file: {e}"
+
+
+# ═══════════════════════════════════════════════════════════════
+# SYNCHRONIZATION (wait-for channels)
+# ═══════════════════════════════════════════════════════════════
+
+@mcp.tool()
+async def wait_for_signal(
+    channel: str,
+    timeout_s: int = 300
+) -> dict:
+    """
+    Wait for a worker to signal completion on a channel.
+
+    Workers can signal with: tmux wait-for -S {channel}
+    or use send_signal() tool.
+
+    Args:
+        channel: Channel name (e.g., "done-BD-abc", "worker-1-complete")
+        timeout_s: Timeout in seconds (default: 300 = 5 minutes)
+
+    Returns:
+        Dict with status and timing info
+    """
+    import time
+    start = time.time()
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "tmux", "wait-for", channel,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        await asyncio.wait_for(proc.wait(), timeout=timeout_s)
+        elapsed = time.time() - start
+
+        return {
+            "channel": channel,
+            "status": "received",
+            "elapsed_s": round(elapsed, 2)
+        }
+    except asyncio.TimeoutError:
+        proc.kill()
+        return {
+            "channel": channel,
+            "status": "timeout",
+            "timeout_s": timeout_s
+        }
+    except Exception as e:
+        return {
+            "channel": channel,
+            "status": "error",
+            "error": str(e)
+        }
+
+
+@mcp.tool()
+def send_signal(channel: str) -> str:
+    """
+    Send a signal on a channel (unblocks any wait_for_signal listeners).
+
+    Use this when a worker completes its task.
+
+    Args:
+        channel: Channel name (e.g., "done-BD-abc")
+
+    Returns:
+        Confirmation message
+    """
+    result = subprocess.run(
+        ["tmux", "wait-for", "-S", channel],
+        capture_output=True, text=True
+    )
+
+    if result.returncode != 0:
+        return f"Failed to send signal: {result.stderr.strip()}"
+
+    return f"Signal sent: {channel}"
+
+
+# ═══════════════════════════════════════════════════════════════
+# POPUP NOTIFICATIONS (display-popup)
+# ═══════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def show_popup(
+    message: str,
+    title: str = "Conductor",
+    width: int = 50,
+    height: int = 10,
+    duration_s: int = 3,
+    target: Optional[str] = None
+) -> str:
+    """
+    Show a floating popup notification in tmux.
+
+    Args:
+        message: Message to display
+        title: Popup title (default: "Conductor")
+        width: Popup width in columns (default: 50)
+        height: Popup height in rows (default: 10)
+        duration_s: How long to show (default: 3 seconds)
+        target: Target pane/session (default: current)
+
+    Returns:
+        Confirmation message
+    """
+    # Build the command to run inside popup
+    # Using printf for better escaping, then sleep for duration
+    escaped_msg = message.replace("'", "'\\''")
+    popup_cmd = f"printf '%s\\n' '{escaped_msg}'; sleep {duration_s}"
+
+    args = ["tmux", "display-popup"]
+
+    if target:
+        args.extend(["-t", target])
+
+    args.extend([
+        "-T", title,
+        "-w", str(width),
+        "-h", str(height),
+        "-E", popup_cmd
+    ])
+
+    # Run in background so it doesn't block
+    subprocess.Popen(
+        args,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+
+    return f"Popup shown: {message[:30]}{'...' if len(message) > 30 else ''}"
+
+
+@mcp.tool()
+def show_status_popup(
+    workers: Optional[list] = None,
+    target: Optional[str] = None
+) -> str:
+    """
+    Show a popup with current worker status summary.
+
+    Args:
+        workers: List of worker dicts (from list_workers). If None, fetches fresh.
+        target: Target pane/session (default: current)
+
+    Returns:
+        Confirmation message
+    """
+    if workers is None:
+        workers = list_workers()
+
+    if not workers:
+        message = "No active workers"
+    else:
+        lines = ["WORKER STATUS", "=" * 30]
+        for w in workers:
+            status = w.get("claude_status") or "unknown"
+            attached = "•" if w.get("attached") else " "
+            lines.append(f"{attached} {w['session']}: {status}")
+        lines.append("=" * 30)
+        lines.append(f"Total: {len(workers)} workers")
+        message = "\n".join(lines)
+
+    return show_popup(
+        message=message,
+        title="Worker Status",
+        width=40,
+        height=min(len(workers) + 6, 20),
+        duration_s=5,
+        target=target
+    )
+
+
+# ═══════════════════════════════════════════════════════════════
+# HOOKS (event-driven automation)
+# ═══════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def set_pane_hook(
+    event: str,
+    command: str,
+    session: Optional[str] = None
+) -> str:
+    """
+    Set a hook to run a command when a pane event occurs.
+
+    Args:
+        event: Event name (pane-died, pane-exited, pane-focus-in, pane-focus-out)
+        command: Shell command to run when event fires
+        session: Session to attach hook to (default: global)
+
+    Returns:
+        Confirmation message
+    """
+    valid_events = [
+        "pane-died", "pane-exited", "pane-focus-in", "pane-focus-out",
+        "pane-mode-changed", "pane-set-clipboard"
+    ]
+
+    if event not in valid_events:
+        return f"Invalid event. Valid events: {', '.join(valid_events)}"
+
+    args = ["tmux", "set-hook"]
+
+    if session:
+        args.extend(["-t", session])
+    else:
+        args.append("-g")  # Global hook
+
+    args.extend([event, f"run-shell '{command}'"])
+
+    result = subprocess.run(args, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        return f"Failed to set hook: {result.stderr.strip()}"
+
+    scope = f"session {session}" if session else "global"
+    return f"Hook set ({scope}): {event} -> {command}"
+
+
+@mcp.tool()
+def clear_hook(
+    event: str,
+    session: Optional[str] = None
+) -> str:
+    """
+    Clear a previously set hook.
+
+    Args:
+        event: Event name to clear
+        session: Session (default: global)
+
+    Returns:
+        Confirmation message
+    """
+    args = ["tmux", "set-hook"]
+
+    if session:
+        args.extend(["-t", session, "-u", event])
+    else:
+        args.extend(["-gu", event])
+
+    result = subprocess.run(args, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        return f"Failed to clear hook: {result.stderr.strip()}"
+
+    return f"Hook cleared: {event}"
+
+
+@mcp.tool()
+def list_hooks(session: Optional[str] = None) -> list[dict]:
+    """
+    List active hooks.
+
+    Args:
+        session: Session (default: global)
+
+    Returns:
+        List of hook definitions
+    """
+    args = ["tmux", "show-hooks"]
+
+    if session:
+        args.extend(["-t", session])
+    else:
+        args.append("-g")
+
+    result = subprocess.run(args, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        return []
+
+    hooks = []
+    for line in result.stdout.strip().split("\n"):
+        if not line:
+            continue
+        # Format: "event command"
+        parts = line.split(" ", 1)
+        if len(parts) >= 2:
+            hooks.append({
+                "event": parts[0],
+                "command": parts[1]
+            })
+
+    return hooks
+
+
+# ═══════════════════════════════════════════════════════════════
+# PANE RESIZING & LAYOUT
+# ═══════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def resize_pane(
+    pane_id: str,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+    adjust_x: Optional[int] = None,
+    adjust_y: Optional[int] = None
+) -> str:
+    """
+    Resize a pane to specific dimensions or by relative amounts.
+
+    Args:
+        pane_id: Pane ID (e.g., "%0")
+        width: Set absolute width in columns
+        height: Set absolute height in rows
+        adjust_x: Adjust width by +/- columns (e.g., 10 or -5)
+        adjust_y: Adjust height by +/- rows (e.g., 10 or -5)
+
+    Returns:
+        Confirmation message
+    """
+    args = ["tmux", "resize-pane", "-t", pane_id]
+
+    if width is not None:
+        args.extend(["-x", str(width)])
+    if height is not None:
+        args.extend(["-y", str(height)])
+    if adjust_x is not None:
+        if adjust_x > 0:
+            args.extend(["-R", str(adjust_x)])
+        else:
+            args.extend(["-L", str(abs(adjust_x))])
+    if adjust_y is not None:
+        if adjust_y > 0:
+            args.extend(["-D", str(adjust_y)])
+        else:
+            args.extend(["-U", str(abs(adjust_y))])
+
+    result = subprocess.run(args, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        return f"Failed to resize: {result.stderr.strip()}"
+
+    return f"Resized pane: {pane_id}"
+
+
+@mcp.tool()
+def zoom_pane(pane_id: str) -> str:
+    """
+    Toggle zoom (fullscreen) for a pane.
+
+    When zoomed, the pane fills the entire window.
+    Call again to unzoom.
+
+    Args:
+        pane_id: Pane ID (e.g., "%0")
+
+    Returns:
+        Confirmation message
+    """
+    result = subprocess.run(
+        ["tmux", "resize-pane", "-t", pane_id, "-Z"],
+        capture_output=True, text=True
+    )
+
+    if result.returncode != 0:
+        return f"Failed to toggle zoom: {result.stderr.strip()}"
+
+    return f"Toggled zoom for pane: {pane_id}"
+
+
+@mcp.tool()
+def apply_layout(
+    layout: str,
+    target: Optional[str] = None
+) -> str:
+    """
+    Apply a layout to organize panes evenly.
+
+    Args:
+        layout: Layout name - one of:
+            - "tiled" (equal grid)
+            - "even-horizontal" (side by side, equal width)
+            - "even-vertical" (stacked, equal height)
+            - "main-horizontal" (one large on top, others below)
+            - "main-vertical" (one large on left, others right)
+        target: Target window (default: current)
+
+    Returns:
+        Confirmation message
+    """
+    valid_layouts = [
+        "tiled", "even-horizontal", "even-vertical",
+        "main-horizontal", "main-vertical"
+    ]
+
+    if layout not in valid_layouts:
+        return f"Invalid layout. Valid options: {', '.join(valid_layouts)}"
+
+    args = ["tmux", "select-layout"]
+
+    if target:
+        args.extend(["-t", target])
+
+    args.append(layout)
+
+    result = subprocess.run(args, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        return f"Failed to apply layout: {result.stderr.strip()}"
+
+    return f"Applied layout: {layout}"
+
+
+@mcp.tool()
+def rebalance_panes(target: Optional[str] = None) -> str:
+    """
+    Rebalance panes to equal sizes using tiled layout.
+
+    Useful after killing a pane to reorganize the remaining ones.
+
+    Args:
+        target: Target window (default: current)
+
+    Returns:
+        Confirmation message with pane count
+    """
+    # Get pane count first
+    args = ["tmux", "list-panes"]
+    if target:
+        args.extend(["-t", target])
+
+    result = subprocess.run(args, capture_output=True, text=True)
+    pane_count = len(result.stdout.strip().split("\n")) if result.stdout.strip() else 0
+
+    # Apply tiled layout
+    apply_result = apply_layout("tiled", target)
+
+    if "Failed" in apply_result:
+        return apply_result
+
+    return f"Rebalanced {pane_count} panes with tiled layout"
 
 
 # ═══════════════════════════════════════════════════════════════

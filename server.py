@@ -723,5 +723,106 @@ When done:
     }
 
 
+# ═══════════════════════════════════════════════════════════════
+# PROMPTS (appear in /slash command menu)
+# ═══════════════════════════════════════════════════════════════
+
+@mcp.prompt(
+    name="spawn-wave",
+    title="Spawn Worker Wave",
+    description="Create a grid and spawn workers for ready beads issues"
+)
+def prompt_spawn_wave(project_dir: str, layout: str = "2x2") -> list[dict]:
+    """Prompt to spawn a wave of workers for ready issues."""
+    return [
+        {
+            "role": "user",
+            "content": f"""Create a {layout} grid and spawn workers for ready beads issues.
+
+Project: {project_dir}
+
+Steps:
+1. Run `bd ready` to get ready issues (not blocked)
+2. Create a {layout} grid with create_grid()
+3. For each pane and ready issue, use spawn_worker_in_pane()
+4. Announce each spawn with speak()
+5. Report which workers were spawned
+
+Use the conductor MCP tools: create_grid, spawn_worker_in_pane, speak, list_panes"""
+        }
+    ]
+
+
+@mcp.prompt(
+    name="worker-status",
+    title="Check Worker Status",
+    description="Get status of all active workers with audio summary"
+)
+def prompt_worker_status() -> list[dict]:
+    """Prompt to check all worker statuses."""
+    return [
+        {
+            "role": "user",
+            "content": """Check the status of all active workers.
+
+Steps:
+1. Use list_workers() to get all tmux sessions
+2. For each worker, use get_worker_status() to get Claude's state
+3. Summarize: how many idle, processing, using tools
+4. Announce summary with speak()
+
+Report format:
+- Worker name | Status | Current tool | Context %"""
+        }
+    ]
+
+
+@mcp.prompt(
+    name="orchestrate",
+    title="Full Orchestration",
+    description="Run complete orchestration: plan issues, spawn workers, monitor"
+)
+def prompt_orchestrate(project_dir: str) -> list[dict]:
+    """Prompt for full orchestration workflow."""
+    return [
+        {
+            "role": "user",
+            "content": f"""Run full orchestration for {project_dir}.
+
+Phase 1 - Planning:
+1. Run `bd ready` to see available work
+2. Run `bd blocked` to see what's waiting on dependencies
+3. Decide how many workers to spawn (max 4 for 2x2 grid)
+
+Phase 2 - Spawning:
+1. Create grid layout with create_grid()
+2. Spawn workers with spawn_worker_in_pane() for each issue
+3. Announce "Wave started with N workers"
+
+Phase 3 - Monitoring:
+1. Periodically check worker status with list_panes()
+2. When a worker shows idle status, check if issue is closed
+3. Announce completions with speak()
+
+Use conductor MCP tools throughout. Be the conductor!"""
+        }
+    ]
+
+
+@mcp.prompt(
+    name="announce",
+    title="Make Announcement",
+    description="Speak a message aloud via TTS"
+)
+def prompt_announce(message: str) -> list[dict]:
+    """Simple prompt to make a TTS announcement."""
+    return [
+        {
+            "role": "user",
+            "content": f"Use the speak() tool to announce: {message}"
+        }
+    ]
+
+
 if __name__ == "__main__":
     mcp.run()

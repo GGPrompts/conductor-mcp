@@ -10,7 +10,7 @@ MCP server providing orchestration tools for Claude Code workers.
 - **bd** (optional) - Beads CLI for issue tracking integration
 - **git** - For worktree management
 
-## Tools (33 total)
+## Tools (35 total)
 
 ### Core Worker Tools
 
@@ -23,6 +23,8 @@ MCP server providing orchestration tools for Claude Code workers.
 | `list_workers` | List active tmux sessions |
 | `get_worker_status` | Read Claude state from /tmp/claude-code-state |
 | `capture_worker_output` | Get recent terminal output |
+| `get_context_percent` | Parse context % from Claude Code status line |
+| `get_workers_with_capacity` | Find workers below context threshold for reuse |
 
 ### Session & Window Management
 

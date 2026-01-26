@@ -4,7 +4,7 @@ A lightweight MCP server for orchestrating Claude Code workers from any terminal
 
 **No Chrome required.** Brings TabzChrome's orchestration superpowers to iTerm, Kitty, Alacritty, Windows Terminal, WezTerm, or any terminal you prefer.
 
-## Features (33 Tools)
+## Features (35 Tools)
 
 ### Core Worker Tools
 | Tool | Description |
@@ -16,6 +16,8 @@ A lightweight MCP server for orchestrating Claude Code workers from any terminal
 | `list_workers` | List active worker sessions |
 | `get_worker_status` | Read Claude state from /tmp/claude-code-state |
 | `capture_worker_output` | Get recent terminal output |
+| `get_context_percent` | Parse context % from Claude Code status line |
+| `get_workers_with_capacity` | Find workers with remaining context capacity |
 
 ### Session & Window Management
 | Tool | Description |

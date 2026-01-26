@@ -530,6 +530,115 @@ def get_worker_status(session: str) -> Optional[dict]:
 
 
 @mcp.tool()
+def get_context_percent(target: str) -> dict:
+    """
+    Get the context usage percentage from a Claude Code session's status line.
+
+    Parses the status line format: "~/path │ ⎇ branch │ XX% ctx │ 🤖 Model"
+
+    Args:
+        target: tmux session name or pane ID (e.g., "BD-abc" or "%5")
+
+    Returns:
+        Dict with context_percent (int 0-100), raw_line, and status
+    """
+    import re
+
+    # Capture the last few lines to find the status line
+    result = subprocess.run(
+        ["tmux", "capture-pane", "-t", target, "-p", "-S", "-5"],
+        capture_output=True, text=True
+    )
+
+    if result.returncode != 0:
+        return {
+            "error": f"Failed to capture pane: {result.stderr.strip()}",
+            "context_percent": None
+        }
+
+    lines = result.stdout.strip().split("\n")
+
+    # Look for the status line pattern with "% ctx"
+    pattern = r"(\d+)%\s*ctx"
+
+    for line in reversed(lines):  # Start from bottom
+        match = re.search(pattern, line)
+        if match:
+            percent = int(match.group(1))
+            return {
+                "target": target,
+                "context_percent": percent,
+                "raw_line": line.strip(),
+                "status": "ok"
+            }
+
+    return {
+        "target": target,
+        "context_percent": None,
+        "raw_line": lines[-1] if lines else "",
+        "status": "not_found",
+        "hint": "Status line not visible - Claude may be processing or pane too small"
+    }
+
+
+@mcp.tool()
+def get_workers_with_capacity(threshold: int = 60) -> dict:
+    """
+    Find workers that have remaining context capacity for more tasks.
+
+    Checks all active workers and returns those below the context threshold.
+    Useful for deciding whether to reuse existing workers vs spawn new ones.
+
+    Args:
+        threshold: Context % below which a worker has capacity (default: 60)
+
+    Returns:
+        Dict with workers_with_capacity list and summary stats
+    """
+    workers = list_workers()
+
+    if not workers:
+        return {
+            "workers_with_capacity": [],
+            "workers_at_capacity": [],
+            "total_workers": 0,
+            "available_capacity": 0
+        }
+
+    with_capacity = []
+    at_capacity = []
+
+    for w in workers:
+        session = w["session"]
+        ctx_info = get_context_percent(session)
+
+        worker_info = {
+            "session": session,
+            "context_percent": ctx_info.get("context_percent"),
+            "claude_status": w.get("claude_status"),
+            "attached": w.get("attached", False)
+        }
+
+        if ctx_info.get("context_percent") is not None:
+            if ctx_info["context_percent"] < threshold:
+                worker_info["remaining_capacity"] = threshold - ctx_info["context_percent"]
+                with_capacity.append(worker_info)
+            else:
+                at_capacity.append(worker_info)
+        else:
+            # Can't determine context, assume at capacity to be safe
+            at_capacity.append(worker_info)
+
+    return {
+        "workers_with_capacity": sorted(with_capacity, key=lambda x: x.get("context_percent", 100)),
+        "workers_at_capacity": at_capacity,
+        "total_workers": len(workers),
+        "available_for_tasks": len(with_capacity),
+        "threshold": threshold
+    }
+
+
+@mcp.tool()
 def capture_worker_output(session: str, lines: int = 50) -> str:
     """
     Capture recent output from a worker's tmux pane.

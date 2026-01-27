@@ -35,6 +35,9 @@ fi
 STATE_FILE="$STATE_DIR/${SESSION_ID}.json"
 SUBAGENT_COUNT_FILE="$SUBAGENT_DIR/${SESSION_ID}.count"
 
+# Export SESSION_ID for audio-announcer.sh (ensures consistent voice outside tmux)
+export CLAUDE_SESSION_ID="$SESSION_ID"
+
 get_subagent_count() {
     cat "$SUBAGENT_COUNT_FILE" 2>/dev/null || echo "0"
 }
@@ -197,12 +200,48 @@ esac
 
 SUBAGENT_COUNT=$(get_subagent_count)
 
+# Try to get context data from the context file written by the statusline script
+# The statusline writes claude_session_id to our state file, which links to the context file
+CONTEXT_PERCENT="null"
+CONTEXT_WINDOW_SIZE="null"
+TOTAL_INPUT_TOKENS="null"
+TOTAL_OUTPUT_TOKENS="null"
+CLAUDE_SESSION_ID=""
+
+# Check if we have a previous state file with claude_session_id
+if [[ -f "$STATE_FILE" ]]; then
+    CLAUDE_SESSION_ID=$(jq -r '.claude_session_id // ""' "$STATE_FILE" 2>/dev/null || echo "")
+fi
+
+# If we have claude_session_id, try to read context data
+if [[ -n "$CLAUDE_SESSION_ID" ]]; then
+    CONTEXT_FILE="$STATE_DIR/${CLAUDE_SESSION_ID}-context.json"
+    if [[ -f "$CONTEXT_FILE" ]]; then
+        # Check if context file is fresh (within 60 seconds)
+        CONTEXT_AGE=$(($(date +%s) - $(stat -c %Y "$CONTEXT_FILE" 2>/dev/null || echo 0)))
+        if [[ $CONTEXT_AGE -lt 60 ]]; then
+            CONTEXT_PERCENT=$(jq -r '.context_pct // "null"' "$CONTEXT_FILE" 2>/dev/null || echo "null")
+            CONTEXT_WINDOW_SIZE=$(jq -r '.context_window.context_window_size // "null"' "$CONTEXT_FILE" 2>/dev/null || echo "null")
+            TOTAL_INPUT_TOKENS=$(jq -r '.context_window.total_input_tokens // "null"' "$CONTEXT_FILE" 2>/dev/null || echo "null")
+            TOTAL_OUTPUT_TOKENS=$(jq -r '.context_window.total_output_tokens // "null"' "$CONTEXT_FILE" 2>/dev/null || echo "null")
+        fi
+    fi
+fi
+
+# Build state JSON with context data when available
 STATE_JSON=$(cat <<EOF
 {
   "session_id": "$SESSION_ID",
+  "claude_session_id": $(if [[ -n "$CLAUDE_SESSION_ID" ]]; then echo "\"$CLAUDE_SESSION_ID\""; else echo "null"; fi),
   "status": "$STATUS",
   "current_tool": "$CURRENT_TOOL",
   "subagent_count": $SUBAGENT_COUNT,
+  "context_percent": $CONTEXT_PERCENT,
+  "context_window": {
+    "size": $CONTEXT_WINDOW_SIZE,
+    "input_tokens": $TOTAL_INPUT_TOKENS,
+    "output_tokens": $TOTAL_OUTPUT_TOKENS
+  },
   "working_dir": "$PWD",
   "last_updated": "$TIMESTAMP",
   "tmux_pane": "$TMUX_PANE",

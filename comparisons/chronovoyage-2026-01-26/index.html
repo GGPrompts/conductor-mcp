@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Model Comparison: ChronoVoyage</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .date { color: #888; margin-bottom: 2rem; }
+        .prompt-section {
+            background: #1a1a2e;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            border-left: 4px solid #667eea;
+        }
+        .prompt-label { color: #667eea; font-weight: 600; margin-bottom: 0.5rem; }
+        .prompt-text { font-family: monospace; line-height: 1.6; color: #ccc; }
+        .models {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-top: 2rem;
+        }
+        .model-card {
+            background: #16162a;
+            border-radius: 12px;
+            overflow: hidden;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .model-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 40px rgba(102, 126, 234, 0.2);
+        }
+        .model-header {
+            padding: 1rem 1.5rem;
+            font-weight: 600;
+            font-size: 1.2rem;
+        }
+        .claude .model-header { background: linear-gradient(135deg, #d97706 0%, #ea580c 100%); }
+        .codex .model-header { background: linear-gradient(135deg, #10a37f 0%, #1a7f64 100%); }
+        .copilot .model-header { background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); }
+        .model-info {
+            padding: 1.5rem;
+            color: #aaa;
+            font-size: 0.9rem;
+        }
+        .model-info p { margin-bottom: 0.5rem; }
+        .view-btn {
+            display: block;
+            margin: 1rem 1.5rem 1.5rem;
+            padding: 0.75rem 1.5rem;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            text-align: center;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+        .view-btn:hover { background: #5a6fd6; }
+        .file-size { font-family: monospace; color: #888; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Model Comparison: ChronoVoyage</h1>
+        <p class="date">January 26, 2026 - conductor-mcp test</p>
+
+        <div class="prompt-section">
+            <p class="prompt-label">PROMPT</p>
+            <p class="prompt-text">Create a single HTML file for a time-travel tourism agency called "ChronoVoyage". Make it creative and fun with CSS animations. Include: a hero section with a catchy tagline, 3-4 destination time periods to visit (e.g., Ancient Rome, Roaring 20s, Year 3000), pricing tiers, and a booking CTA. All in one self-contained index.html with inline CSS/JS. Save it as index.html in the current directory.</p>
+        </div>
+
+        <h2 style="margin-bottom: 1rem; color: #888;">Results</h2>
+
+        <div class="models">
+            <div class="model-card claude">
+                <div class="model-header">Claude (Anthropic)</div>
+                <div class="model-info">
+                    <p>Model: <strong>Opus 4.5</strong></p>
+                    <p>Command: <code>claude</code></p>
+                    <p>File size: <span class="file-size">20 KB</span></p>
+                </div>
+                <a href="claude.html" class="view-btn">View Page</a>
+            </div>
+
+            <div class="model-card codex">
+                <div class="model-header">Codex (OpenAI)</div>
+                <div class="model-info">
+                    <p>Model: <strong>codex5.2-medium</strong></p>
+                    <p>Command: <code>codex</code></p>
+                    <p>File size: <span class="file-size">14 KB</span></p>
+                </div>
+                <a href="codex.html" class="view-btn">View Page</a>
+            </div>
+
+            <div class="model-card copilot">
+                <div class="model-header">Copilot (GitHub)</div>
+                <div class="model-info">
+                    <p>Model: <strong>Gemini 3</strong></p>
+                    <p>Command: <code>copilot</code></p>
+                    <p>File size: <span class="file-size">12 KB</span></p>
+                </div>
+                <a href="copilot.html" class="view-btn">View Page</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

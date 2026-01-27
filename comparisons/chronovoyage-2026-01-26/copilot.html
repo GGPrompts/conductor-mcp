@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChronoVoyage | Time Travel Tourism</title>
+    <style>
+        :root {
+            --primary: #6c5ce7;
+            --secondary: #00cec9;
+            --accent: #fd79a8;
+            --dark: #2d3436;
+            --light: #dfe6e9;
+            --font-main: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--font-main);
+            background-color: var(--dark);
+            color: var(--light);
+            overflow-x: hidden;
+        }
+
+        /* Animations */
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-20px); }
+            100% { transform: translateY(0px); }
+        }
+
+        @keyframes warp {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(253, 121, 168, 0.7); }
+            70% { box-shadow: 0 0 0 20px rgba(253, 121, 168, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(253, 121, 168, 0); }
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(50px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Hero Section */
+        .hero {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            background: linear-gradient(-45deg, #2d3436, #0984e3, #6c5ce7, #d63031);
+            background-size: 400% 400%;
+            animation: warp 15s ease infinite;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero h1 {
+            font-size: 5rem;
+            text-transform: uppercase;
+            letter-spacing: 5px;
+            margin-bottom: 1rem;
+            text-shadow: 0 0 20px rgba(0,0,0,0.5);
+            animation: float 6s ease-in-out infinite;
+        }
+
+        .hero h1 span {
+            color: var(--secondary);
+        }
+
+        .hero p {
+            font-size: 1.5rem;
+            max-width: 600px;
+            margin-bottom: 2rem;
+            line-height: 1.6;
+        }
+
+        .cta-btn {
+            padding: 1rem 3rem;
+            font-size: 1.2rem;
+            background-color: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: transform 0.3s, background 0.3s;
+            text-decoration: none;
+            font-weight: bold;
+            animation: pulse 2s infinite;
+        }
+
+        .cta-btn:hover {
+            transform: scale(1.1);
+            background-color: #e84393;
+        }
+
+        /* Destinations */
+        .section {
+            padding: 5rem 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .section-title {
+            text-align: center;
+            font-size: 3rem;
+            margin-bottom: 3rem;
+            color: var(--secondary);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 2rem;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: transform 0.3s, box-shadow 0.3s;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card:hover {
+            transform: translateY(-10px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .card h3 {
+            font-size: 1.8rem;
+            margin-bottom: 1rem;
+            color: var(--secondary);
+        }
+
+        .card .year {
+            background: var(--primary);
+            display: inline-block;
+            padding: 0.2rem 0.8rem;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
+            font-weight: bold;
+        }
+
+        .card p {
+            color: #b2bec3;
+            line-height: 1.5;
+        }
+
+        /* Pricing */
+        .pricing-card {
+            text-align: center;
+            border-top: 5px solid var(--primary);
+        }
+
+        .pricing-card.featured {
+            border-top: 5px solid var(--accent);
+            transform: scale(1.05);
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .price {
+            font-size: 3rem;
+            margin: 1.5rem 0;
+            font-weight: bold;
+        }
+
+        .price span {
+            font-size: 1rem;
+            color: #b2bec3;
+        }
+
+        .features {
+            list-style: none;
+            margin-bottom: 2rem;
+        }
+
+        .features li {
+            margin: 0.5rem 0;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        /* Booking CTA */
+        .booking-section {
+            text-align: center;
+            background: linear-gradient(to right, #6c5ce7, #a29bfe);
+            border-radius: 20px;
+            padding: 4rem 2rem;
+            margin-bottom: 4rem;
+        }
+
+        /* Stars Background */
+        .stars {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: -1;
+        }
+        
+        .star {
+            position: absolute;
+            background: white;
+            border-radius: 50%;
+            opacity: 0.5;
+            animation: twinkle 4s infinite;
+        }
+
+        @keyframes twinkle {
+            0%, 100% { opacity: 0.2; transform: scale(0.5); }
+            50% { opacity: 1; transform: scale(1.2); }
+        }
+
+        /* Scroll reveal class */
+        .reveal {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: all 0.8s ease-out;
+        }
+
+        .reveal.active {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="stars" id="stars"></div>
+
+    <header class="hero">
+        <h1>Chrono<span>Voyage</span></h1>
+        <p>Don't just read history. Live it. The world's first premium time-travel agency.</p>
+        <a href="#booking" class="cta-btn">Book Your Era</a>
+    </header>
+
+    <section id="destinations" class="section">
+        <h2 class="section-title reveal">Popular Coordinates</h2>
+        <div class="grid">
+            <div class="card reveal">
+                <span class="year">75,000,000 BC</span>
+                <h3>Jurassic Safari</h3>
+                <p>Witness the majesty of the Cretaceous period. Safe-distance observation pods included. Warning: Do not feed the T-Rex.</p>
+            </div>
+            <div class="card reveal">
+                <span class="year">80 AD</span>
+                <h3>Roman Colosseum</h3>
+                <p>VIP box seats at the inaugural games of the Flavian Amphitheatre. Toga fitting and Latin crash course provided.</p>
+            </div>
+            <div class="card reveal">
+                <span class="year">1925</span>
+                <h3>Roaring Twenties</h3>
+                <p>Jazz, flappers, and speakeasies in New York City. Experience the party that never ended. Prohibition-era cocktails (legal in our timeline!).</p>
+            </div>
+            <div class="card reveal">
+                <span class="year">3024</span>
+                <h3>Neo-Tokyo</h3>
+                <p>Visit the floating chrome cities of the future. Cyber-enhancements optional. Taste the first synthetic ramen.</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="pricing" class="section">
+        <h2 class="section-title reveal">Temporal Tiers</h2>
+        <div class="grid">
+            <div class="card pricing-card reveal">
+                <h3>Observer</h3>
+                <div class="price">10 <small>Chronos</small></div>
+                <ul class="features">
+                    <li>Passive Observation Only</li>
+                    <li>Invisibility Cloak</li>
+                    <li>2 Hour Duration</li>
+                    <li>No Souvenirs</li>
+                </ul>
+                <a href="#booking" style="color: var(--accent); text-decoration: none; font-weight: bold;">Select</a>
+            </div>
+            <div class="card pricing-card featured reveal">
+                <h3>Participant</h3>
+                <div class="price">50 <small>Chronos</small></div>
+                <ul class="features">
+                    <li>Full Physical Interaction</li>
+                    <li>Period-Accurate Clothing</li>
+                    <li>24 Hour Duration</li>
+                    <li>1 Small Souvenir</li>
+                </ul>
+                <a href="#booking" class="cta-btn" style="font-size: 0.9rem; padding: 0.5rem 1.5rem;">Most Popular</a>
+            </div>
+            <div class="card pricing-card reveal">
+                <h3>Paradox</h3>
+                <div class="price">500 <small>Chronos</small></div>
+                <ul class="features">
+                    <li>Butterfly Effect Waiver</li>
+                    <li>Change History Mode</li>
+                    <li>Unlimited Duration</li>
+                    <li>Bring a Companion</li>
+                </ul>
+                <a href="#booking" style="color: var(--accent); text-decoration: none; font-weight: bold;">Select</a>
+            </div>
+        </div>
+    </section>
+
+    <section id="booking" class="section">
+        <div class="booking-section reveal">
+            <h2>Ready to depart?</h2>
+            <p style="margin: 1rem 0 2rem 0; color: white;">Our quantum wormholes are stabilizing. Reserve your spot in history today.</p>
+            <button class="cta-btn" onclick="alert('Wormhole calibration in progress... Please stand by!')">Initialize Sequence</button>
+        </div>
+    </section>
+
+    <footer style="text-align: center; padding: 2rem; background: rgba(0,0,0,0.3); color: #636e72;">
+        <p>&copy; 2026 ChronoVoyage Industries. All timelines reserved.</p>
+        <p style="font-size: 0.8rem; margin-top: 0.5rem;">Warning: We are not responsible for grandfather paradoxes or accidental deity status.</p>
+    </footer>
+
+    <script>
+        // Generate Stars
+        const starsContainer = document.getElementById('stars');
+        for (let i = 0; i < 100; i++) {
+            const star = document.createElement('div');
+            star.classList.add('star');
+            star.style.left = `${Math.random() * 100}%`;
+            star.style.top = `${Math.random() * 100}%`;
+            star.style.width = `${Math.random() * 3}px`;
+            star.style.height = star.style.width;
+            star.style.animationDelay = `${Math.random() * 4}s`;
+            starsContainer.appendChild(star);
+        }
+
+        // Scroll Reveal Animation
+        function reveal() {
+            var reveals = document.querySelectorAll(".reveal");
+            for (var i = 0; i < reveals.length; i++) {
+                var windowHeight = window.innerHeight;
+                var elementTop = reveals[i].getBoundingClientRect().top;
+                var elementVisible = 150;
+                if (elementTop < windowHeight - elementVisible) {
+                    reveals[i].classList.add("active");
+                }
+            }
+        }
+
+        window.addEventListener("scroll", reveal);
+        // Trigger once on load
+        reveal();
+    </script>
+</body>
+</html>

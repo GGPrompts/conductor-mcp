@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ChronoVoyage — Time-Travel Tourism</title>
+    <style>
+      :root {
+        --ink: #111216;
+        --cream: #f6f1e7;
+        --sun: #f7b733;
+        --jade: #3fbf8f;
+        --ruby: #e45757;
+        --ocean: #2f5cf7;
+        --shadow: rgba(17, 18, 22, 0.2);
+        --glass: rgba(246, 241, 231, 0.18);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Space Grotesk", "DM Serif Display", "Georgia", serif;
+        color: var(--ink);
+        background: radial-gradient(1200px 600px at 15% 10%, #fff3d4 0%, #f6f1e7 45%, #e8ecff 100%);
+        min-height: 100vh;
+        overflow-x: hidden;
+      }
+
+      .grid {
+        position: fixed;
+        inset: 0;
+        background-image:
+          linear-gradient(transparent 23px, rgba(17, 18, 22, 0.04) 24px),
+          linear-gradient(90deg, transparent 23px, rgba(17, 18, 22, 0.04) 24px);
+        background-size: 24px 24px;
+        pointer-events: none;
+        opacity: 0.45;
+        mix-blend-mode: multiply;
+      }
+
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 28px 9vw 18px;
+        position: relative;
+        z-index: 2;
+      }
+
+      .logo {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+      }
+
+      .logo span {
+        display: inline-block;
+        padding: 6px 10px;
+        border: 2px solid var(--ink);
+        border-radius: 16px;
+        background: var(--cream);
+        box-shadow: 4px 4px 0 var(--ink);
+      }
+
+      nav a {
+        text-decoration: none;
+        color: var(--ink);
+        margin-left: 18px;
+        font-weight: 600;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 40px;
+        align-items: center;
+        padding: 40px 9vw 80px;
+        position: relative;
+      }
+
+      .hero h1 {
+        font-size: clamp(2.6rem, 4vw, 4.5rem);
+        margin: 0 0 12px;
+      }
+
+      .hero p {
+        font-size: 1.15rem;
+        line-height: 1.6;
+        margin: 0 0 24px;
+      }
+
+      .hero .cta {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 22px;
+        background: var(--ink);
+        color: var(--cream);
+        border-radius: 999px;
+        text-decoration: none;
+        font-weight: 700;
+        box-shadow: 0 12px 30px var(--shadow);
+        transition: transform 0.3s ease;
+      }
+
+      .hero .cta:hover {
+        transform: translateY(-4px) scale(1.02);
+      }
+
+      .portal {
+        position: relative;
+        height: 360px;
+        display: grid;
+        place-items: center;
+      }
+
+      .portal .ring {
+        width: 300px;
+        height: 300px;
+        border-radius: 50%;
+        border: 14px solid rgba(47, 92, 247, 0.35);
+        box-shadow: 0 0 0 12px rgba(247, 183, 51, 0.25),
+          0 0 40px rgba(63, 191, 143, 0.45),
+          inset 0 0 40px rgba(47, 92, 247, 0.4);
+        animation: spin 16s linear infinite;
+      }
+
+      .portal .core {
+        position: absolute;
+        width: 160px;
+        height: 160px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 30% 30%, #fff, #b4f4ff 35%, #2f5cf7 70%);
+        filter: blur(0.2px);
+        animation: pulse 3.6s ease-in-out infinite;
+      }
+
+      .portal .spark {
+        position: absolute;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--sun);
+        animation: orbit 6s linear infinite;
+        box-shadow: 0 0 15px rgba(247, 183, 51, 0.7);
+      }
+
+      .spark:nth-child(3) {
+        animation-delay: -2s;
+        background: var(--jade);
+      }
+
+      .spark:nth-child(4) {
+        animation-delay: -4s;
+        background: var(--ruby);
+      }
+
+      .tagline {
+        display: inline-block;
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: var(--sun);
+        font-weight: 700;
+        margin-bottom: 18px;
+        box-shadow: 6px 6px 0 var(--ink);
+        transform: rotate(-2deg);
+      }
+
+      section {
+        padding: 40px 9vw;
+      }
+
+      .section-title {
+        font-size: 2rem;
+        margin: 0 0 18px;
+      }
+
+      .destinations {
+        display: grid;
+        gap: 18px;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      }
+
+      .card {
+        background: var(--cream);
+        border: 2px solid var(--ink);
+        border-radius: 22px;
+        padding: 20px;
+        box-shadow: 8px 8px 0 var(--ink);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .card h3 {
+        margin: 0 0 10px;
+      }
+
+      .card p {
+        margin: 0 0 12px;
+        line-height: 1.5;
+      }
+
+      .badge {
+        display: inline-block;
+        background: var(--jade);
+        color: #fff;
+        font-weight: 700;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 0.8rem;
+      }
+
+      .card .stamp {
+        position: absolute;
+        right: -30px;
+        top: 18px;
+        transform: rotate(12deg);
+        border: 2px dashed var(--ink);
+        padding: 6px 16px;
+        font-weight: 700;
+        background: rgba(247, 183, 51, 0.8);
+      }
+
+      .pricing {
+        display: grid;
+        gap: 18px;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      }
+
+      .tier {
+        border-radius: 20px;
+        padding: 22px;
+        background: rgba(255, 255, 255, 0.8);
+        border: 2px solid var(--ink);
+        box-shadow: 8px 8px 0 var(--ink);
+        position: relative;
+      }
+
+      .tier h3 {
+        margin: 0 0 8px;
+      }
+
+      .tier .price {
+        font-size: 2rem;
+        font-weight: 700;
+        margin-bottom: 10px;
+      }
+
+      .tier ul {
+        list-style: none;
+        padding: 0;
+        margin: 0 0 16px;
+      }
+
+      .tier li {
+        margin-bottom: 6px;
+      }
+
+      .tier .select {
+        display: inline-block;
+        padding: 10px 16px;
+        border-radius: 999px;
+        border: 2px solid var(--ink);
+        text-decoration: none;
+        font-weight: 700;
+        color: var(--ink);
+        background: #fff;
+      }
+
+      .tier.featured {
+        background: linear-gradient(135deg, #fff0d5, #e8ffef);
+        transform: translateY(-6px);
+      }
+
+      .cta-section {
+        margin: 40px 9vw 80px;
+        border-radius: 28px;
+        border: 2px solid var(--ink);
+        padding: 32px;
+        background: linear-gradient(120deg, rgba(47, 92, 247, 0.18), rgba(228, 87, 87, 0.15));
+        box-shadow: 10px 10px 0 var(--ink);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .cta-section button {
+        border: none;
+        font-weight: 700;
+        background: var(--ink);
+        color: var(--cream);
+        padding: 14px 22px;
+        border-radius: 999px;
+        cursor: pointer;
+        transition: transform 0.3s ease;
+      }
+
+      .cta-section button:hover {
+        transform: scale(1.05);
+      }
+
+      .timeline {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        pointer-events: none;
+      }
+
+      .timeline span {
+        position: absolute;
+        font-size: 0.95rem;
+        font-weight: 700;
+        opacity: 0.3;
+        animation: drift 12s linear infinite;
+      }
+
+      .timeline span:nth-child(1) { top: 12%; left: 8%; animation-delay: -2s; }
+      .timeline span:nth-child(2) { top: 44%; left: 78%; animation-delay: -5s; }
+      .timeline span:nth-child(3) { top: 70%; left: 20%; animation-delay: -8s; }
+      .timeline span:nth-child(4) { top: 32%; left: 55%; animation-delay: -3s; }
+
+      footer {
+        text-align: center;
+        padding: 30px 10vw 50px;
+        font-weight: 600;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @keyframes pulse {
+        0%, 100% {
+          transform: scale(0.95);
+        }
+        50% {
+          transform: scale(1.08);
+        }
+      }
+
+      @keyframes orbit {
+        0% {
+          transform: translate(0, -120px);
+        }
+        25% {
+          transform: translate(120px, 0);
+        }
+        50% {
+          transform: translate(0, 120px);
+        }
+        75% {
+          transform: translate(-120px, 0);
+        }
+        100% {
+          transform: translate(0, -120px);
+        }
+      }
+
+      @keyframes drift {
+        0% {
+          transform: translateX(0);
+        }
+        100% {
+          transform: translateX(-120px);
+        }
+      }
+
+      @media (max-width: 720px) {
+        header {
+          flex-direction: column;
+          gap: 10px;
+        }
+
+        nav {
+          display: flex;
+          gap: 12px;
+          flex-wrap: wrap;
+          justify-content: center;
+        }
+
+        nav a {
+          margin-left: 0;
+        }
+
+        .cta-section {
+          text-align: center;
+          justify-content: center;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="grid" aria-hidden="true"></div>
+    <div class="timeline" aria-hidden="true">
+      <span>1200 BCE</span>
+      <span>1926</span>
+      <span>3000 CE</span>
+      <span>42,000 CE</span>
+    </div>
+
+    <header>
+      <div class="logo">
+        <span>CV</span> ChronoVoyage
+      </div>
+      <nav>
+        <a href="#destinations">Destinations</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#book">Book</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <div class="tagline">Buckle up for the long trip!</div>
+          <h1>Tour time like a local. Yesterday, today, and tomorrow.</h1>
+          <p>
+            ChronoVoyage curates playful, perfectly safe excursions across the timeline — from toga parties to neon skylines.
+            Your only souvenir is awe.
+          </p>
+          <a class="cta" href="#book">Reserve your timeline</a>
+        </div>
+        <div class="portal" aria-hidden="true">
+          <div class="ring"></div>
+          <div class="core"></div>
+          <div class="spark"></div>
+          <div class="spark"></div>
+          <div class="spark"></div>
+        </div>
+      </section>
+
+      <section id="destinations">
+        <h2 class="section-title">Choose your era</h2>
+        <div class="destinations">
+          <article class="card">
+            <div class="stamp">Fan favorite</div>
+            <h3>Ancient Rome</h3>
+            <p>Gladiator games, marble markets, and sunset feasts along the Tiber.</p>
+            <span class="badge">79 CE</span>
+          </article>
+          <article class="card">
+            <div class="stamp">Jazz glow</div>
+            <h3>Roaring 20s</h3>
+            <p>Speakeasies, swing bands, and the electric rush of Art Deco nights.</p>
+            <span class="badge" style="background: var(--ruby);">1926</span>
+          </article>
+          <article class="card">
+            <div class="stamp">Neon future</div>
+            <h3>Year 3000</h3>
+            <p>Floating gardens, hologram bazaars, and zero-gravity street food.</p>
+            <span class="badge" style="background: var(--ocean);">3000 CE</span>
+          </article>
+          <article class="card">
+            <div class="stamp">Cosmic wild</div>
+            <h3>Jurassic Coast</h3>
+            <p>Safari-grade viewpoints of towering dinosaurs and prehistoric shores.</p>
+            <span class="badge" style="background: #8fba4a;">150,000,000 BCE</span>
+          </article>
+        </div>
+      </section>
+
+      <section id="pricing">
+        <h2 class="section-title">Packages for every timeline</h2>
+        <div class="pricing">
+          <article class="tier">
+            <h3>Day Hopper</h3>
+            <div class="price">$499</div>
+            <ul>
+              <li>6-hour excursion</li>
+              <li>Chrono-guide escort</li>
+              <li>Era-appropriate wardrobe</li>
+            </ul>
+            <a class="select" href="#book">Pick this</a>
+          </article>
+          <article class="tier featured">
+            <h3>Weekender</h3>
+            <div class="price">$2,200</div>
+            <ul>
+              <li>3-day immersive stay</li>
+              <li>Portal-lounge access</li>
+              <li>Temporal jet lag kit</li>
+            </ul>
+            <a class="select" href="#book">Most popular</a>
+          </article>
+          <article class="tier">
+            <h3>Epoch Grand Tour</h3>
+            <div class="price">$7,900</div>
+            <ul>
+              <li>7 eras in 7 days</li>
+              <li>Private chronoshuttle</li>
+              <li>Custom memory capsule</li>
+            </ul>
+            <a class="select" href="#book">Go deluxe</a>
+          </article>
+        </div>
+      </section>
+
+      <section id="book" class="cta-section">
+        <div>
+          <h2 class="section-title">Ready to jump?</h2>
+          <p>Secure your seat in the chronoshuttle. We only take 12 travelers per jump.</p>
+        </div>
+        <button id="bookBtn">Book the next departure</button>
+      </section>
+    </main>
+
+    <footer>
+      ChronoVoyage © 3026 · Licensed by the Bureau of Timeline Tourism
+    </footer>
+
+    <script>
+      const button = document.getElementById("bookBtn");
+      const taglines = [
+        "Opening portal in 3…",
+        "Calibrating chrono-nav…",
+        "Packing paradox-proof snacks…",
+        "Seat locked: time awaits!"
+      ];
+
+      let idx = 0;
+      button.addEventListener("click", () => {
+        button.textContent = taglines[idx % taglines.length];
+        idx += 1;
+      });
+    </script>
+  </body>
+</html>

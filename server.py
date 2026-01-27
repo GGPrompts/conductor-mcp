@@ -529,18 +529,78 @@ def get_worker_status(session: str) -> Optional[dict]:
         return None
 
 
-@mcp.tool()
-def get_context_percent(target: str) -> dict:
+def _get_context_from_state_files(target: str) -> dict | None:
     """
-    Get the context usage percentage from a Claude Code session's status line.
+    Try to get context percentage from state files written by the statusline script.
 
-    Parses the status line format: "~/path │ ⎇ branch │ XX% ctx │ 🤖 Model"
+    Returns None if data unavailable or stale (>30 seconds old).
+    """
+    import time
 
-    Args:
-        target: tmux session name or pane ID (e.g., "BD-abc" or "%5")
+    # First, get the pane ID for this target
+    result = subprocess.run(
+        ["tmux", "display-message", "-t", target, "-p", "#{pane_id}"],
+        capture_output=True, text=True
+    )
 
-    Returns:
-        Dict with context_percent (int 0-100), raw_line, and status
+    if result.returncode != 0:
+        return None
+
+    pane_id = result.stdout.strip()
+    # Sanitize pane ID same way as state-tracker.sh
+    sanitized_pane_id = pane_id.replace("%", "_").replace(":", "_")
+
+    state_file = STATE_DIR / f"{sanitized_pane_id}.json"
+
+    if not state_file.exists():
+        return None
+
+    try:
+        with open(state_file) as f:
+            state = json.load(f)
+
+        # Get the claude_session_id that links to the context file
+        claude_session_id = state.get("claude_session_id")
+        if not claude_session_id:
+            return None
+
+        # Read the context file
+        context_file = STATE_DIR / f"{claude_session_id}-context.json"
+        if not context_file.exists():
+            return None
+
+        # Check if context file is fresh (within 30 seconds)
+        file_age = time.time() - context_file.stat().st_mtime
+        if file_age > 30:
+            return None
+
+        with open(context_file) as f:
+            context_data = json.load(f)
+
+        context_pct = context_data.get("context_pct")
+        if context_pct is None:
+            return None
+
+        # Extract additional token info if available
+        context_window = context_data.get("context_window", {})
+
+        return {
+            "target": target,
+            "context_percent": int(context_pct),
+            "source": "state_file",
+            "status": "ok",
+            "context_window_size": context_window.get("context_window_size"),
+            "total_input_tokens": context_window.get("total_input_tokens"),
+            "total_output_tokens": context_window.get("total_output_tokens"),
+            "file_age_seconds": round(file_age, 1)
+        }
+    except (json.JSONDecodeError, IOError, KeyError):
+        return None
+
+
+def _get_context_from_terminal(target: str) -> dict:
+    """
+    Fallback: scrape context percentage from terminal status line.
     """
     import re
 
@@ -568,6 +628,7 @@ def get_context_percent(target: str) -> dict:
             return {
                 "target": target,
                 "context_percent": percent,
+                "source": "terminal_scrape",
                 "raw_line": line.strip(),
                 "status": "ok"
             }
@@ -575,10 +636,35 @@ def get_context_percent(target: str) -> dict:
     return {
         "target": target,
         "context_percent": None,
+        "source": "terminal_scrape",
         "raw_line": lines[-1] if lines else "",
         "status": "not_found",
         "hint": "Status line not visible - Claude may be processing or pane too small"
     }
+
+
+@mcp.tool()
+def get_context_percent(target: str) -> dict:
+    """
+    Get the context usage percentage from a Claude Code session.
+
+    Attempts to read from state files first (accurate, from statusline script),
+    then falls back to parsing the visible terminal status line.
+
+    Args:
+        target: tmux session name or pane ID (e.g., "BD-abc" or "%5")
+
+    Returns:
+        Dict with context_percent (int 0-100), source ("state_file" or "terminal_scrape"),
+        and additional token info when available from state files.
+    """
+    # Try state files first (more accurate)
+    result = _get_context_from_state_files(target)
+    if result is not None:
+        return result
+
+    # Fall back to terminal scraping
+    return _get_context_from_terminal(target)
 
 
 @mcp.tool()

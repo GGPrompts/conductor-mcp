@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChronoVoyage - Your Gateway to Every Era</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #6c5ce7;
+            --secondary: #00cec9;
+            --accent: #fd79a8;
+            --dark: #0a0a1a;
+            --light: #f8f9fa;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: var(--dark);
+            color: var(--light);
+            overflow-x: hidden;
+        }
+
+        /* Animated starfield background */
+        .stars {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .star {
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            background: white;
+            border-radius: 50%;
+            animation: twinkle 3s infinite ease-in-out;
+        }
+
+        @keyframes twinkle {
+            0%, 100% { opacity: 0.3; transform: scale(1); }
+            50% { opacity: 1; transform: scale(1.5); }
+        }
+
+        /* Time vortex effect */
+        .vortex {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            width: 800px;
+            height: 800px;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 0;
+            opacity: 0.15;
+        }
+
+        .vortex-ring {
+            position: absolute;
+            border: 2px solid var(--secondary);
+            border-radius: 50%;
+            animation: vortex-spin 20s linear infinite;
+        }
+
+        @keyframes vortex-spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        /* Hero Section */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 2rem;
+            position: relative;
+            z-index: 1;
+        }
+
+        .logo {
+            font-size: 1.2rem;
+            letter-spacing: 0.5em;
+            text-transform: uppercase;
+            color: var(--secondary);
+            margin-bottom: 2rem;
+            animation: fadeInDown 1s ease-out;
+        }
+
+        .hero h1 {
+            font-size: clamp(3rem, 10vw, 7rem);
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--primary), var(--secondary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: titleGlow 3s ease-in-out infinite, fadeInUp 1s ease-out;
+        }
+
+        @keyframes titleGlow {
+            0%, 100% { filter: drop-shadow(0 0 20px rgba(108, 92, 231, 0.5)); }
+            50% { filter: drop-shadow(0 0 40px rgba(0, 206, 201, 0.8)); }
+        }
+
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translateY(-30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .tagline {
+            font-size: clamp(1.2rem, 3vw, 1.8rem);
+            color: rgba(255, 255, 255, 0.8);
+            margin-top: 1.5rem;
+            animation: fadeInUp 1s ease-out 0.3s both;
+        }
+
+        .tagline span {
+            color: var(--accent);
+            font-style: italic;
+        }
+
+        .scroll-indicator {
+            position: absolute;
+            bottom: 2rem;
+            animation: bounce 2s infinite;
+        }
+
+        .scroll-indicator::before {
+            content: '\\2193';
+            font-size: 2rem;
+            color: var(--secondary);
+        }
+
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(10px); }
+        }
+
+        /* Section styles */
+        section {
+            padding: 5rem 2rem;
+            position: relative;
+            z-index: 1;
+        }
+
+        .section-title {
+            text-align: center;
+            font-size: clamp(2rem, 5vw, 3.5rem);
+            margin-bottom: 3rem;
+            background: linear-gradient(90deg, var(--secondary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        /* Destinations */
+        .destinations {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 2rem;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .destination-card {
+            background: linear-gradient(145deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 20px;
+            padding: 2rem;
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .destination-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            transform: scaleX(0);
+            transition: transform 0.4s ease;
+        }
+
+        .destination-card:hover {
+            transform: translateY(-10px) scale(1.02);
+            border-color: var(--secondary);
+            box-shadow: 0 20px 40px rgba(0, 206, 201, 0.2);
+        }
+
+        .destination-card:hover::before {
+            transform: scaleX(1);
+        }
+
+        .era-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            display: block;
+            animation: float 3s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
+        .destination-card:nth-child(2) .era-icon { animation-delay: 0.5s; }
+        .destination-card:nth-child(3) .era-icon { animation-delay: 1s; }
+        .destination-card:nth-child(4) .era-icon { animation-delay: 1.5s; }
+
+        .destination-card h3 {
+            font-size: 1.5rem;
+            color: var(--secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .destination-card .year {
+            font-size: 0.9rem;
+            color: var(--accent);
+            margin-bottom: 1rem;
+            font-weight: 600;
+        }
+
+        .destination-card p {
+            color: rgba(255,255,255,0.7);
+            line-height: 1.6;
+        }
+
+        .highlights {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .highlights li {
+            list-style: none;
+            padding: 0.3rem 0;
+            color: rgba(255,255,255,0.6);
+            font-size: 0.9rem;
+        }
+
+        .highlights li::before {
+            content: '\\2022';
+            color: var(--accent);
+            margin-right: 0.5rem;
+        }
+
+        /* Pricing */
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .price-card {
+            background: linear-gradient(145deg, rgba(108, 92, 231, 0.1), rgba(0, 206, 201, 0.05));
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 20px;
+            padding: 2.5rem;
+            text-align: center;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .price-card.featured {
+            border-color: var(--secondary);
+            transform: scale(1.05);
+        }
+
+        .price-card.featured::after {
+            content: 'MOST POPULAR';
+            position: absolute;
+            top: -12px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: linear-gradient(90deg, var(--accent), var(--primary));
+            padding: 0.3rem 1rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+        }
+
+        .price-card:hover {
+            border-color: var(--secondary);
+            box-shadow: 0 0 30px rgba(0, 206, 201, 0.3);
+        }
+
+        .price-card h3 {
+            font-size: 1.5rem;
+            color: var(--light);
+            margin-bottom: 0.5rem;
+        }
+
+        .price-card .price {
+            font-size: 3rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--secondary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 1rem 0;
+        }
+
+        .price-card .price span {
+            font-size: 1rem;
+            color: rgba(255,255,255,0.5);
+            -webkit-text-fill-color: initial;
+        }
+
+        .price-card ul {
+            list-style: none;
+            margin: 1.5rem 0;
+            text-align: left;
+        }
+
+        .price-card ul li {
+            padding: 0.7rem 0;
+            color: rgba(255,255,255,0.7);
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .price-card ul li::before {
+            content: '\\2713';
+            color: var(--secondary);
+            margin-right: 0.7rem;
+            font-weight: bold;
+        }
+
+        /* CTA Button */
+        .cta-btn {
+            display: inline-block;
+            padding: 1rem 2.5rem;
+            font-size: 1.1rem;
+            font-weight: 600;
+            text-decoration: none;
+            color: var(--dark);
+            background: linear-gradient(135deg, var(--secondary), var(--accent));
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .cta-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .cta-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(0, 206, 201, 0.4);
+        }
+
+        .cta-btn:hover::before {
+            left: 100%;
+        }
+
+        /* Final CTA Section */
+        .final-cta {
+            text-align: center;
+            padding: 6rem 2rem;
+            background: linear-gradient(180deg, transparent, rgba(108, 92, 231, 0.1));
+        }
+
+        .final-cta h2 {
+            font-size: clamp(2rem, 5vw, 3rem);
+            margin-bottom: 1rem;
+        }
+
+        .final-cta p {
+            font-size: 1.2rem;
+            color: rgba(255,255,255,0.7);
+            margin-bottom: 2rem;
+        }
+
+        /* Warning Banner */
+        .warning {
+            background: rgba(253, 121, 168, 0.1);
+            border: 1px solid var(--accent);
+            border-radius: 10px;
+            padding: 1rem 2rem;
+            max-width: 600px;
+            margin: 3rem auto 0;
+            font-size: 0.9rem;
+            color: rgba(255,255,255,0.7);
+        }
+
+        .warning strong {
+            color: var(--accent);
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 2rem;
+            color: rgba(255,255,255,0.4);
+            font-size: 0.9rem;
+            border-top: 1px solid rgba(255,255,255,0.05);
+        }
+
+        footer a {
+            color: var(--secondary);
+            text-decoration: none;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .price-card.featured {
+                transform: scale(1);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="stars" id="stars"></div>
+    <div class="vortex" id="vortex"></div>
+
+    <!-- Hero Section -->
+    <header class="hero">
+        <div class="logo">ChronoVoyage</div>
+        <h1>Travel Through Time</h1>
+        <p class="tagline">Where will you go? <span>When</span> will you go?</p>
+        <div class="scroll-indicator"></div>
+    </header>
+
+    <!-- Destinations Section -->
+    <section>
+        <h2 class="section-title">Choose Your Era</h2>
+        <div class="destinations">
+            <div class="destination-card">
+                <span class="era-icon">🏛️</span>
+                <h3>Ancient Rome</h3>
+                <p class="year">27 BC - 476 AD</p>
+                <p>Walk the streets of the Eternal City at the height of its glory. Witness gladiatorial combat, feast like an emperor, and see the Colosseum brand new.</p>
+                <ul class="highlights">
+                    <li>VIP Colosseum access</li>
+                    <li>Toga fitting included</li>
+                    <li>Latin phrase guide</li>
+                </ul>
+            </div>
+
+            <div class="destination-card">
+                <span class="era-icon">🎺</span>
+                <h3>Roaring Twenties</h3>
+                <p class="year">1920 - 1929</p>
+                <p>Jazz, speakeasies, and art deco glamour await. Dance the Charleston, sip bootleg cocktails, and experience the electric energy of the Jazz Age.</p>
+                <ul class="highlights">
+                    <li>Speakeasy password provided</li>
+                    <li>Flapper/dapper attire rental</li>
+                    <li>Gatsby-style party invite</li>
+                </ul>
+            </div>
+
+            <div class="destination-card">
+                <span class="era-icon">🦕</span>
+                <h3>Cretaceous Safari</h3>
+                <p class="year">66 Million BC</p>
+                <p>See dinosaurs in their natural habitat from our armored observation pods. Watch a T-Rex hunt, witness herds of Triceratops, and return before the asteroid.</p>
+                <ul class="highlights">
+                    <li>Reinforced observation pod</li>
+                    <li>Emergency extraction guarantee</li>
+                    <li>Dino photo package</li>
+                </ul>
+            </div>
+
+            <div class="destination-card">
+                <span class="era-icon">🚀</span>
+                <h3>Year 3000</h3>
+                <p class="year">3000 AD</p>
+                <p>Experience humanity's golden age of interstellar travel. Visit the Mars colonies, ride quantum transit, and taste cuisine from twelve different star systems.</p>
+                <ul class="highlights">
+                    <li>Neural interface rental</li>
+                    <li>Zero-G spa session</li>
+                    <li>Alien cuisine tasting</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pricing Section -->
+    <section>
+        <h2 class="section-title">Temporal Packages</h2>
+        <div class="pricing-grid">
+            <div class="price-card">
+                <h3>Day Tripper</h3>
+                <div class="price">$4,999<span>/trip</span></div>
+                <ul>
+                    <li>24-hour temporal visa</li>
+                    <li>Standard era orientation</li>
+                    <li>Emergency recall beacon</li>
+                    <li>Basic paradox insurance</li>
+                </ul>
+                <a href="#book" class="cta-btn">Book Now</a>
+            </div>
+
+            <div class="price-card featured">
+                <h3>Epoch Explorer</h3>
+                <div class="price">$12,999<span>/trip</span></div>
+                <ul>
+                    <li>7-day temporal stay</li>
+                    <li>Premium era immersion</li>
+                    <li>Personal temporal guide</li>
+                    <li>Full paradox coverage</li>
+                    <li>Souvenir authentication</li>
+                </ul>
+                <a href="#book" class="cta-btn">Book Now</a>
+            </div>
+
+            <div class="price-card">
+                <h3>Chrono Elite</h3>
+                <div class="price">$49,999<span>/trip</span></div>
+                <ul>
+                    <li>30-day multi-era pass</li>
+                    <li>Unlimited era hopping</li>
+                    <li>Luxury temporal suite</li>
+                    <li>Historical figure meetups</li>
+                    <li>Causality repair team</li>
+                </ul>
+                <a href="#book" class="cta-btn">Book Now</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Final CTA -->
+    <section class="final-cta" id="book">
+        <h2>Ready to Make History?</h2>
+        <p>Your timeline awaits. Book your temporal journey today.</p>
+        <a href="#" class="cta-btn" onclick="bookTrip()">Begin Your Journey</a>
+        <div class="warning">
+            <strong>Temporal Advisory:</strong> ChronoVoyage is not responsible for butterfly effects, grandfather paradoxes, or accidental timeline alterations. All travelers must sign the Temporal Responsibility Waiver.
+        </div>
+    </section>
+
+    <footer>
+        <p>&copy; 2025-3025 ChronoVoyage Inc. | <a href="#">Temporal Terms</a> | <a href="#">Paradox Policy</a></p>
+        <p>Licensed by the Intergalactic Temporal Authority (ITA)</p>
+    </footer>
+
+    <script>
+        // Generate stars
+        function createStars() {
+            const container = document.getElementById('stars');
+            for (let i = 0; i < 150; i++) {
+                const star = document.createElement('div');
+                star.className = 'star';
+                star.style.left = Math.random() * 100 + '%';
+                star.style.top = Math.random() * 100 + '%';
+                star.style.animationDelay = Math.random() * 3 + 's';
+                star.style.width = Math.random() * 2 + 1 + 'px';
+                star.style.height = star.style.width;
+                container.appendChild(star);
+            }
+        }
+
+        // Generate vortex rings
+        function createVortex() {
+            const container = document.getElementById('vortex');
+            for (let i = 0; i < 8; i++) {
+                const ring = document.createElement('div');
+                ring.className = 'vortex-ring';
+                const size = 100 + i * 100;
+                ring.style.width = size + 'px';
+                ring.style.height = size + 'px';
+                ring.style.left = '50%';
+                ring.style.top = '50%';
+                ring.style.marginLeft = -size/2 + 'px';
+                ring.style.marginTop = -size/2 + 'px';
+                ring.style.animationDuration = (15 + i * 3) + 's';
+                ring.style.animationDirection = i % 2 ? 'reverse' : 'normal';
+                container.appendChild(ring);
+            }
+        }
+
+        // Book trip animation
+        function bookTrip() {
+            const btn = event.target;
+            btn.textContent = 'Initiating Temporal Jump...';
+            btn.style.pointerEvents = 'none';
+
+            setTimeout(() => {
+                btn.textContent = 'Calibrating Flux Capacitor...';
+            }, 1000);
+
+            setTimeout(() => {
+                btn.textContent = 'Timeline Secured!';
+                btn.style.background = 'linear-gradient(135deg, #00b894, #00cec9)';
+            }, 2000);
+
+            setTimeout(() => {
+                alert('Welcome, Temporal Traveler!\n\nYour booking request has been sent to our agents across all timelines.\n\nA confirmation will arrive... yesterday.');
+                btn.textContent = 'Begin Your Journey';
+                btn.style.pointerEvents = 'auto';
+                btn.style.background = '';
+            }, 3000);
+        }
+
+        // Initialize
+        createStars();
+        createVortex();
+
+        // Parallax effect on scroll
+        window.addEventListener('scroll', () => {
+            const scrolled = window.pageYOffset;
+            document.getElementById('vortex').style.transform =
+                `translate(-50%, -50%) rotate(${scrolled * 0.02}deg)`;
+        });
+    </script>
+</body>
+</html>

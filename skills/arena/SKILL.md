@@ -175,8 +175,8 @@ codex exec "$PROMPT"
 # Gemini - positional query, -y/--yolo for auto-approve
 gemini -y "$PROMPT"
 
-# Copilot - needs --allow-all-tools for auto, prompt via stdin or positional
-copilot --allow-all-tools "$PROMPT"
+# Copilot - use -i for interactive with prompt, -p for non-interactive
+copilot -i "$PROMPT" --allow-all-tools
 ```
 
 ### Full Spawn Commands
@@ -189,7 +189,7 @@ WORKDIR="$CHALLENGES_DIR/$CHALLENGE_ID"
 tmux send-keys -t $CODEX_PANE "cd $WORKDIR/codex && codex \"$PROMPT\"" Enter
 
 # Copilot pane
-tmux send-keys -t $COPILOT_PANE "cd $WORKDIR/copilot && copilot --allow-all-tools \"$PROMPT\"" Enter
+tmux send-keys -t $COPILOT_PANE "cd $WORKDIR/copilot && copilot -i \"$PROMPT\" --allow-all-tools" Enter
 
 # Gemini pane (yolo mode)
 tmux send-keys -t $GEMINI_PANE "cd $WORKDIR/gemini && gemini -y \"$PROMPT\"" Enter
@@ -206,4 +206,4 @@ cd $WORKDIR/claude
 | `claude` | (user config) | Set in `~/.claude/settings.json` |
 | `codex` | (default interactive) | Use `exec` subcommand for non-interactive |
 | `gemini` | `-y` or `--yolo` | Auto-approves all actions |
-| `copilot` | `--allow-all-tools` | Required for non-interactive |
+| `copilot` | `-i` + `--allow-all-tools` | `-i "prompt"` for interactive, `-p` for headless |

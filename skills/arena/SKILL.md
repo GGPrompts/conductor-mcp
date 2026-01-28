@@ -14,7 +14,6 @@ Run a blind comparison challenge across multiple AI models in parallel.
 |-----|-------|------|
 | `claude` | Claude Code (Opus 4.5) | `claude --help` |
 | `codex` | OpenAI Codex | `codex --help` |
-| `copilot` | GitHub Copilot | `copilot --help` |
 | `gemini` | Google Gemini | `gemini --help` |
 
 ## Workflow
@@ -40,7 +39,7 @@ NEXT_NUM=$((NEXT_NUM + 1))
 CHALLENGE_ID=$(printf "%03d" $NEXT_NUM)-$SLUG
 
 # Create folder structure
-mkdir -p "$CHALLENGES_DIR/$CHALLENGE_ID"/{claude,codex,copilot,gemini}
+mkdir -p "$CHALLENGES_DIR/$CHALLENGE_ID"/{claude,codex,gemini}
 ```
 
 ### Phase 3: Split Current Pane into Quad
@@ -51,18 +50,18 @@ Split your current pane into 4 (you stay in top-left):
 # Get current pane
 CURRENT=$(tmux display-message -p '#{pane_id}')
 
-# Split right (creates pane for codex)
-tmux split-window -h -t $CURRENT
+# Split right (creates pane for claude contestant)
+tmux split-window -h -t $CURRENT -c "$WORKDIR/claude"
+CLAUDE_PANE=$(tmux display-message -p '#{pane_id}')
+
+# Split the left side down (creates pane for codex)
+tmux select-pane -t $CURRENT
+tmux split-window -v -t $CURRENT -c "$WORKDIR/codex"
 CODEX_PANE=$(tmux display-message -p '#{pane_id}')
 
-# Split the left side down (creates pane for copilot)
-tmux select-pane -t $CURRENT
-tmux split-window -v -t $CURRENT
-COPILOT_PANE=$(tmux display-message -p '#{pane_id}')
-
 # Split the right side down (creates pane for gemini)
-tmux select-pane -t $CODEX_PANE
-tmux split-window -v -t $CODEX_PANE
+tmux select-pane -t $CLAUDE_PANE
+tmux split-window -v -t $CLAUDE_PANE -c "$WORKDIR/gemini"
 GEMINI_PANE=$(tmux display-message -p '#{pane_id}')
 
 # Return focus to conductor pane
@@ -72,11 +71,11 @@ tmux select-pane -t $CURRENT
 Result:
 ```
 ┌──────────────┬──────────────┐
-│  Conductor   │    Codex     │
-│  (claude)    │              │
+│  Conductor   │   Claude     │
+│  (watching)  │  (competing) │
 ├──────────────┼──────────────┤
-│   Copilot    │   Gemini     │
-│              │              │
+│    Codex     │   Gemini     │
+│  (competing) │  (competing) │
 └──────────────┴──────────────┘
 ```
 
@@ -86,21 +85,21 @@ Each CLI needs its prompt passed correctly. Check flags first:
 
 ```bash
 # Discover prompt flags (run these to see options)
+claude --help | grep -i prompt
 codex --help | grep -i prompt
-copilot --help | grep -i prompt
 gemini --help | grep -i prompt
 ```
 
 Common patterns:
 ```bash
-# Codex - typically takes prompt as argument
+# Claude - positional prompt
+claude "$PROMPT"
+
+# Codex - positional prompt
 codex "$PROMPT"
 
-# Copilot - may use stdin or -m flag
-echo "$PROMPT" | copilot
-
-# Gemini - check for prompt flag
-gemini --prompt "$PROMPT"
+# Gemini - positional with -y for auto-approve
+gemini -y "$PROMPT"
 ```
 
 Send to each pane:
@@ -108,19 +107,17 @@ Send to each pane:
 PROMPT="Create X in a single index.html file. Self-contained, no external deps."
 WORKDIR="$CHALLENGES_DIR/$CHALLENGE_ID"
 
-# Spawn in each pane
-tmux send-keys -t $CODEX_PANE "cd $WORKDIR/codex && codex \"$PROMPT\"" Enter
-tmux send-keys -t $COPILOT_PANE "cd $WORKDIR/copilot && copilot \"$PROMPT\"" Enter
-tmux send-keys -t $GEMINI_PANE "cd $WORKDIR/gemini && gemini \"$PROMPT\"" Enter
+# Spawn all 3 contestants
+tmux send-keys -t $CLAUDE_PANE "claude \"$PROMPT\"" Enter
+tmux send-keys -t $CODEX_PANE "codex \"$PROMPT\"" Enter
+tmux send-keys -t $GEMINI_PANE "gemini -y \"$PROMPT\"" Enter
 
-# Conductor works in claude/ folder
-cd $WORKDIR/claude
-# ... do the work here
+# Conductor stays in current pane and watches
 ```
 
 ### Phase 5: Monitor & Collect
 
-Watch all 4 panes. When each completes:
+Watch all 3 panes. When each completes:
 
 ```bash
 # Check for outputs
@@ -128,8 +125,8 @@ ls -la $WORKDIR/*/index.html
 
 # When all done, anonymize
 cd $WORKDIR
-FILES=(claude/index.html codex/index.html copilot/index.html gemini/index.html)
-LETTERS=(a b c d)
+FILES=(claude/index.html codex/index.html gemini/index.html)
+LETTERS=(a b c)
 
 # Shuffle (using shuf or sort -R)
 SHUFFLED=($(printf '%s\n' "${FILES[@]}" | shuf))
@@ -154,9 +151,9 @@ python -m http.server 8080
 
 ## Tips
 
-- Conductor (you) can work on the claude/ entry while watching others
+- Conductor watches all 3 compete - you don't participate
 - Some CLIs may need `--yes` or `-y` to skip confirmations
-- If a model fails, you still have 3 others to compare
+- If a model fails, you still have 2 others to compare
 - The quad-split lets you watch all progress in real-time
 
 ## CLI Commands Reference
@@ -174,9 +171,6 @@ codex exec "$PROMPT"
 
 # Gemini - positional query, -y/--yolo for auto-approve
 gemini -y "$PROMPT"
-
-# Copilot - use -i for interactive with prompt, -p for non-interactive
-copilot -i "$PROMPT" --allow-all-tools
 ```
 
 ### Full Spawn Commands
@@ -185,18 +179,16 @@ copilot -i "$PROMPT" --allow-all-tools
 PROMPT="Create a lava lamp effect in a single index.html file. Self-contained, inline CSS/JS, no external deps."
 WORKDIR="$CHALLENGES_DIR/$CHALLENGE_ID"
 
-# Codex pane
-tmux send-keys -t $CODEX_PANE "cd $WORKDIR/codex && codex \"$PROMPT\"" Enter
+# Claude pane
+tmux send-keys -t $CLAUDE_PANE "claude \"$PROMPT\"" Enter
 
-# Copilot pane
-tmux send-keys -t $COPILOT_PANE "cd $WORKDIR/copilot && copilot -i \"$PROMPT\" --allow-all-tools" Enter
+# Codex pane
+tmux send-keys -t $CODEX_PANE "codex \"$PROMPT\"" Enter
 
 # Gemini pane (yolo mode)
-tmux send-keys -t $GEMINI_PANE "cd $WORKDIR/gemini && gemini -y \"$PROMPT\"" Enter
+tmux send-keys -t $GEMINI_PANE "gemini -y \"$PROMPT\"" Enter
 
-# Conductor (you) works in claude folder
-cd $WORKDIR/claude
-# Start working on your entry...
+# Conductor watches from current pane
 ```
 
 ### Auto-Approve Flags Summary
@@ -206,4 +198,3 @@ cd $WORKDIR/claude
 | `claude` | (user config) | Set in `~/.claude/settings.json` |
 | `codex` | (default interactive) | Use `exec` subcommand for non-interactive |
 | `gemini` | `-y` or `--yolo` | Auto-approves all actions |
-| `copilot` | `-i` + `--allow-all-tools` | `-i "prompt"` for interactive, `-p` for headless |

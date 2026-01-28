@@ -5,66 +5,107 @@ Run a blind comparison challenge across multiple AI models in parallel.
 ## Usage
 
 ```
-/arena "Create a lava lamp effect with metaballs"
+/arena                           # Interactive setup with prompts
+/arena "custom prompt here"      # Skip to spawn with custom prompt
 ```
 
-## Available CLIs
+## Interactive Setup
 
-| CLI | Model | Help |
-|-----|-------|------|
-| `claude` | Claude Code (Opus 4.5) | `claude --help` |
-| `codex` | OpenAI Codex | `codex --help` |
-| `gemini` | Google Gemini | `gemini --help` |
+When run without arguments, ask the user:
 
-## Workflow
+### 1. Prompt Complexity
 
-### Phase 1: Discover Current Pane
-
-First, find your current tmux pane (TabzChrome starts at 1):
-
-```bash
-# Get current pane info
-tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}'
+```
+What complexity level?
 ```
 
-### Phase 2: Setup Challenge Folder
+| Option | Description |
+|--------|-------------|
+| Simple | Basic animations, single elements (bouncing ball, color picker) |
+| Medium | Small games, editors (snake, markdown preview, todo app) |
+| Complex | Advanced effects, multi-component (metaballs, 3D, physics) |
+| Custom | User provides their own prompt |
+
+### 2. Pick a Prompt
+
+Based on complexity, offer 3-4 options:
+
+**Simple prompts:**
+- "Create a bouncing ball animation with trail effect"
+- "Build a color picker with hex/rgb display"
+- "Make an animated gradient background"
+- "Create a digital clock with flip animation"
+
+**Medium prompts:**
+- "Build a snake game with score and game over"
+- "Create a markdown editor with live preview"
+- "Make a todo app with local storage"
+- "Build a typing speed test"
+
+**Complex prompts:**
+- "Create a lava lamp with metaball blobs that merge and separate"
+- "Build a particle system with gravity and mouse interaction"
+- "Make a 3D rotating cube with CSS transforms"
+- "Create a piano keyboard with sound synthesis"
+
+### 3. Execution Mode
+
+```
+How should the models run?
+```
+
+| Mode | Description |
+|------|-------------|
+| Interactive | Watch each model work in real-time (default) |
+| Headless | Models run silently, collect results when done |
+
+### 4. Confirm & Spawn
+
+```
+Ready to spawn arena?
+
+Contestants: Claude, Codex, Gemini
+Prompt: "Create a bouncing ball..."
+Mode: Interactive
+
+[Start Arena]
+```
+
+## Execution
+
+### Setup Challenge Folder
 
 ```bash
 ARENA_DIR=~/projects/model-arena
 CHALLENGES_DIR=$ARENA_DIR/challenges
 
-# Find next challenge number
-NEXT_NUM=$(ls -1 "$CHALLENGES_DIR" | wc -l)
-NEXT_NUM=$((NEXT_NUM + 1))
+NEXT_NUM=$(($(ls -1 "$CHALLENGES_DIR" 2>/dev/null | wc -l) + 1))
 CHALLENGE_ID=$(printf "%03d" $NEXT_NUM)-$SLUG
 
-# Create folder structure
 mkdir -p "$CHALLENGES_DIR/$CHALLENGE_ID"/{claude,codex,gemini}
 ```
 
-### Phase 3: Split Current Pane into Quad
-
-Split your current pane into 4 (you stay in top-left):
+### Split Current Pane into Quad
 
 ```bash
-# Get current pane
 CURRENT=$(tmux display-message -p '#{pane_id}')
+WORKDIR="$CHALLENGES_DIR/$CHALLENGE_ID"
 
-# Split right (creates pane for claude contestant)
+# Split right (claude contestant)
 tmux split-window -h -t $CURRENT -c "$WORKDIR/claude"
 CLAUDE_PANE=$(tmux display-message -p '#{pane_id}')
 
-# Split the left side down (creates pane for codex)
+# Split left side down (codex)
 tmux select-pane -t $CURRENT
 tmux split-window -v -t $CURRENT -c "$WORKDIR/codex"
 CODEX_PANE=$(tmux display-message -p '#{pane_id}')
 
-# Split the right side down (creates pane for gemini)
+# Split right side down (gemini)
 tmux select-pane -t $CLAUDE_PANE
 tmux split-window -v -t $CLAUDE_PANE -c "$WORKDIR/gemini"
 GEMINI_PANE=$(tmux display-message -p '#{pane_id}')
 
-# Return focus to conductor pane
+# Return focus to conductor
 tmux select-pane -t $CURRENT
 ```
 
@@ -79,122 +120,90 @@ Result:
 └──────────────┴──────────────┘
 ```
 
-### Phase 4: Spawn Models with Prompts
+### Spawn Commands
 
-Each CLI needs its prompt passed correctly. Check flags first:
-
+**Interactive mode** (watch them work):
 ```bash
-# Discover prompt flags (run these to see options)
-claude --help | grep -i prompt
-codex --help | grep -i prompt
-gemini --help | grep -i prompt
+ARENA_RULES="Create this in a single index.html file. Self-contained, inline CSS/JS, no external dependencies."
+FULL_PROMPT="$USER_PROMPT\n\n$ARENA_RULES"
+
+tmux send-keys -t $CLAUDE_PANE "claude \"$FULL_PROMPT\"" Enter
+tmux send-keys -t $CODEX_PANE "codex \"$FULL_PROMPT\"" Enter
+tmux send-keys -t $GEMINI_PANE "gemini -i \"$FULL_PROMPT\" -y" Enter
 ```
 
-Common patterns:
+**Headless mode** (run silently):
 ```bash
-# Claude - positional prompt
-claude "$PROMPT"
-
-# Codex - positional prompt
-codex "$PROMPT"
-
-# Gemini - positional with -y for auto-approve
-gemini -y "$PROMPT"
+tmux send-keys -t $CLAUDE_PANE "claude -p \"$FULL_PROMPT\" > index.html && echo Done" Enter
+tmux send-keys -t $CODEX_PANE "codex exec \"$FULL_PROMPT\"" Enter
+tmux send-keys -t $GEMINI_PANE "gemini -y \"$FULL_PROMPT\"" Enter
 ```
 
-Send to each pane:
-```bash
-PROMPT="Create X in a single index.html file. Self-contained, no external deps."
-WORKDIR="$CHALLENGES_DIR/$CHALLENGE_ID"
+## Monitor & Collect
 
-# Spawn all 3 contestants
-tmux send-keys -t $CLAUDE_PANE "claude \"$PROMPT\"" Enter
-tmux send-keys -t $CODEX_PANE "codex \"$PROMPT\"" Enter
-tmux send-keys -t $GEMINI_PANE "gemini -y \"$PROMPT\"" Enter
-
-# Conductor stays in current pane and watches
-```
-
-### Phase 5: Monitor & Collect
-
-Watch all 3 panes. When each completes:
+Watch the panes. When all complete:
 
 ```bash
 # Check for outputs
 ls -la $WORKDIR/*/index.html
 
-# When all done, anonymize
+# Anonymize
 cd $WORKDIR
 FILES=(claude/index.html codex/index.html gemini/index.html)
+MODELS=("claude" "codex" "gemini")
 LETTERS=(a b c)
 
-# Shuffle (using shuf or sort -R)
-SHUFFLED=($(printf '%s\n' "${FILES[@]}" | shuf))
+INDICES=(0 1 2)
+SHUFFLED=($(shuf -e "${INDICES[@]}"))
 
-# Copy to anonymized names
-for i in "${!SHUFFLED[@]}"; do
-    cp "${SHUFFLED[$i]}" "${LETTERS[$i]}.html"
+declare -A ANSWERS
+for i in 0 1 2; do
+    src_idx=${SHUFFLED[$i]}
+    cp "${FILES[$src_idx]}" "${LETTERS[$i]}.html"
+    ANSWERS[${LETTERS[$i]}]="${MODELS[$src_idx]}"
 done
 
-# Create meta.json with answers
-# ...
+# Create meta.json
+cat > meta.json << EOF
+{
+  "id": "$CHALLENGE_ID",
+  "title": "$TITLE",
+  "date": "$(date +%Y-%m-%d)",
+  "prompt": "$USER_PROMPT",
+  "contestants": ["claude", "codex", "gemini"],
+  "answers": {
+    "a": "${ANSWERS[a]}",
+    "b": "${ANSWERS[b]}",
+    "c": "${ANSWERS[c]}"
+  }
+}
+EOF
 ```
 
-### Phase 6: View Results
+### Add to Viewer
 
-```bash
-# Open gallery
-cd ~/projects/model-arena
-python -m http.server 8080
-# Visit http://localhost:8080
+Edit `~/projects/model-arena/index.html` and add the challenge ID to the registry:
+
+```javascript
+const challengeIds = [
+  'NEW-CHALLENGE-ID',  // Add here
+  '007-balatro-lava',
+  // ...
+];
 ```
+
+## CLI Reference
+
+| CLI | Interactive | Headless |
+|-----|-------------|----------|
+| claude | `claude "prompt"` | `claude -p "prompt"` |
+| codex | `codex "prompt"` | `codex exec "prompt"` |
+| gemini | `gemini -i "prompt" -y` | `gemini -y "prompt"` |
 
 ## Tips
 
-- Conductor watches all 3 compete - you don't participate
-- Some CLIs may need `--yes` or `-y` to skip confirmations
-- If a model fails, you still have 2 others to compare
-- The quad-split lets you watch all progress in real-time
-
-## CLI Commands Reference
-
-Each CLI takes a prompt and has auto-approve flags:
-
-```bash
-# Claude Code - positional prompt (bypass permissions via user config)
-claude "$PROMPT"
-
-# Codex - positional prompt, has exec subcommand for non-interactive
-codex "$PROMPT"
-# or non-interactive:
-codex exec "$PROMPT"
-
-# Gemini - positional query, -y/--yolo for auto-approve
-gemini -y "$PROMPT"
-```
-
-### Full Spawn Commands
-
-```bash
-PROMPT="Create a lava lamp effect in a single index.html file. Self-contained, inline CSS/JS, no external deps."
-WORKDIR="$CHALLENGES_DIR/$CHALLENGE_ID"
-
-# Claude pane
-tmux send-keys -t $CLAUDE_PANE "claude \"$PROMPT\"" Enter
-
-# Codex pane
-tmux send-keys -t $CODEX_PANE "codex \"$PROMPT\"" Enter
-
-# Gemini pane (yolo mode)
-tmux send-keys -t $GEMINI_PANE "gemini -y \"$PROMPT\"" Enter
-
-# Conductor watches from current pane
-```
-
-### Auto-Approve Flags Summary
-
-| CLI | Auto-Approve | Notes |
-|-----|--------------|-------|
-| `claude` | (user config) | Set in `~/.claude/settings.json` |
-| `codex` | (default interactive) | Use `exec` subcommand for non-interactive |
-| `gemini` | `-y` or `--yolo` | Auto-approves all actions |
+- Interactive mode lets you watch the race unfold
+- Headless is faster but less fun
+- Gemini often finishes first
+- Codex in reasoning mode takes longer but often better results
+- Some prompts favor different models - try a few!

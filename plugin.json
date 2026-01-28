@@ -1,0 +1,12 @@
+{
+  "name": "conductor-mcp",
+  "version": "0.1.0",
+  "description": "Orchestration tools for multi-model workflows and worker management",
+  "skills": [
+    {
+      "name": "arena",
+      "description": "Run blind comparison challenges across multiple AI models in parallel quad-split",
+      "path": "skills/arena"
+    }
+  ]
+}

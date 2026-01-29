@@ -62,7 +62,7 @@ DEFAULT_CONFIG = {
         "random_per_worker": True,
     },
     "delays": {
-        "send_prompt_ms": 800,
+        "send_keys_ms": 800,
         "claude_boot_s": 4,
     },
     "worker_voice_assignments": {},  # worker_id -> voice
@@ -139,42 +139,45 @@ def release_worker_voice(worker_id: str) -> None:
 
 
 @mcp.tool()
-async def send_prompt(
+async def send_keys(
     session: str,
-    text: str,
+    keys: str,
+    submit: bool = True,
     delay_ms: int = DEFAULT_DELAY_MS
 ) -> str:
     """
-    Send a prompt to a Claude/Codex tmux session with proper delay for submission.
+    Send keys to a tmux session. If submit=True, waits then presses Enter.
 
-    The delay between sending text and pressing Enter is critical - without it,
-    Claude/Codex will create a newline instead of submitting the prompt.
+    The delay between sending text and pressing Enter is critical for Claude/Codex -
+    without it, they create a newline instead of submitting the prompt.
 
     Args:
         session: tmux session name (e.g., "BD-abc" or "ctt-profile-uuid")
-        text: The prompt text to send
-        delay_ms: Milliseconds to wait before pressing Enter (default: 800)
+        keys: The text/keys to send
+        submit: If True, wait delay_ms then press Enter (default: True)
+        delay_ms: Milliseconds to wait before Enter (default: 800, ignored if submit=False)
 
     Returns:
         Confirmation message
     """
-    # Send the text (escape any special tmux characters)
-    escaped_text = text.replace("'", "'\\''")
+    # Send the keys (literal mode to avoid tmux interpretation)
     subprocess.run(
-        ["tmux", "send-keys", "-t", session, "-l", text],
+        ["tmux", "send-keys", "-t", session, "-l", keys],
         check=True
     )
 
-    # Wait for input detection
-    await asyncio.sleep(delay_ms / 1000)
+    if submit:
+        # Wait for input detection
+        await asyncio.sleep(delay_ms / 1000)
 
-    # Press Enter to submit
-    subprocess.run(
-        ["tmux", "send-keys", "-t", session, "Enter"],
-        check=True
-    )
+        # Press Enter to submit
+        subprocess.run(
+            ["tmux", "send-keys", "-t", session, "Enter"],
+            check=True
+        )
+        return f"Sent keys to {session} ({len(keys)} chars, submitted after {delay_ms}ms)"
 
-    return f"Sent prompt to {session} ({len(text)} chars, {delay_ms}ms delay)"
+    return f"Sent keys to {session} ({len(keys)} chars, no submit)"
 
 
 @mcp.tool()
@@ -267,9 +270,9 @@ When done:
         except Exception as e:
             context_text = f"Work on issue {issue_id}. When done: bd close {issue_id}"
 
-    # 6. Send the prompt
+    # 6. Send the keys
     if context_text:
-        await send_prompt(session_name, context_text)
+        await send_keys(session_name, context_text)
 
     return {
         "session": session_name,
@@ -1194,9 +1197,9 @@ When done:
         except Exception:
             context_text = f"Work on issue {issue_id}. When done: bd close {issue_id}"
 
-    # 6. Send the prompt
+    # 6. Send the keys
     if context_text:
-        await send_prompt(pane_id, context_text)
+        await send_keys(pane_id, context_text)
 
     return {
         "pane_id": pane_id,
@@ -1775,7 +1778,7 @@ def set_config(
     voice_rate: Optional[str] = None,
     voice_pitch: Optional[str] = None,
     random_voices: Optional[bool] = None,
-    send_prompt_delay_ms: Optional[int] = None,
+    send_keys_delay_ms: Optional[int] = None,
     claude_boot_delay_s: Optional[int] = None
 ) -> dict:
     """
@@ -1788,7 +1791,7 @@ def set_config(
         voice_rate: Speech rate (e.g., "+0%", "+20%", "-10%")
         voice_pitch: Voice pitch (e.g., "+0Hz", "+50Hz")
         random_voices: Assign unique voices per worker (default: True)
-        send_prompt_delay_ms: Delay before Enter key (default: 800)
+        send_keys_delay_ms: Delay before Enter key when submit=True (default: 800)
         claude_boot_delay_s: Wait time for Claude to boot (default: 4)
 
     Returns:
@@ -1808,8 +1811,8 @@ def set_config(
         config["voice"]["pitch"] = voice_pitch
     if random_voices is not None:
         config["voice"]["random_per_worker"] = random_voices
-    if send_prompt_delay_ms is not None:
-        config["delays"]["send_prompt_ms"] = send_prompt_delay_ms
+    if send_keys_delay_ms is not None:
+        config["delays"]["send_keys_ms"] = send_keys_delay_ms
     if claude_boot_delay_s is not None:
         config["delays"]["claude_boot_s"] = claude_boot_delay_s
 

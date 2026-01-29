@@ -9,7 +9,7 @@ A lightweight MCP server for orchestrating Claude Code workers from any terminal
 ### Core Worker Tools
 | Tool | Description |
 |------|-------------|
-| `send_prompt` | Send text to Claude/Codex with proper delay for submission |
+| `send_keys` | Send keys to tmux session, optionally submit with Enter |
 | `spawn_worker` | Create worktree + tmux session + inject beads context |
 | `speak` | TTS announcements via edge-tts (with audio mutex) |
 | `kill_worker` | Clean up worker session and optionally worktree |
@@ -80,16 +80,21 @@ A lightweight MCP server for orchestrating Claude Code workers from any terminal
 
 ## The Key Differentiator
 
-The tmux MCP's `execute-command` sends keys immediately, which causes Claude/Codex prompts to create a newline instead of submitting. `send_prompt` fixes this:
+The tmux MCP's `execute-command` sends keys immediately, which causes Claude/Codex prompts to create a newline instead of submitting. `send_keys` fixes this with an optional delay:
 
 ```python
 # What tmux MCP does (broken for Claude):
 tmux send-keys -t session "prompt" Enter  # Too fast!
 
 # What conductor-mcp does (works):
-tmux send-keys -t session "prompt"
-sleep 0.8  # Wait for input detection
-tmux send-keys -t session Enter
+send_keys(session, "prompt")  # submit=True by default
+# Internally:
+#   tmux send-keys -t session "prompt"
+#   sleep 0.8  # Wait for input detection
+#   tmux send-keys -t session Enter
+
+# Just type without submitting:
+send_keys(session, "partial text", submit=False)
 ```
 
 ## Installation
@@ -160,10 +165,13 @@ The conductor assigns unique voices to workers automatically. Available voices:
 
 ## Usage Examples
 
-### Basic: Send prompts to workers
+### Basic: Send keys to workers
 ```python
-# Send a prompt with proper delay
-send_prompt(session="worker-1", text="Fix the auth bug")
+# Send and submit (default behavior)
+send_keys(session="worker-1", keys="Fix the auth bug")
+
+# Send without submitting
+send_keys(session="worker-1", keys="partial input", submit=False)
 
 # Announce status
 speak(text="Task assigned to worker 1")

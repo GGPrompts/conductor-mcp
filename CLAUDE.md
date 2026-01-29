@@ -16,7 +16,7 @@ MCP server providing orchestration tools for Claude Code workers.
 
 | Tool | Purpose |
 |------|---------|
-| `send_prompt` | Send text to tmux session with delay for prompt submission |
+| `send_keys` | Send keys to tmux session, optionally submit with Enter |
 | `spawn_worker` | Create worktree + tmux session + inject beads context |
 | `speak` | TTS announcements via edge-tts |
 | `kill_worker` | Terminate worker session |
@@ -95,15 +95,22 @@ MCP server providing orchestration tools for Claude Code workers.
 
 ## Key Pattern: The Delay Fix
 
-The critical feature is `send_prompt`'s delay between text and Enter:
+The `send_keys` tool handles the timing automatically:
 
 ```python
-tmux send-keys -t session "text"
-sleep 0.8  # Wait for Claude's input detection
-tmux send-keys -t session Enter
+# Submit with delay (default)
+send_keys(session, "text")  # submit=True by default
+
+# Just type without submitting
+send_keys(session, "partial", submit=False)
+
+# Internally when submit=True:
+#   tmux send-keys -t session "text"
+#   sleep 0.8  # Wait for Claude's input detection
+#   tmux send-keys -t session Enter
 ```
 
-Without this delay, Claude creates a newline instead of submitting.
+Without the delay, Claude creates a newline instead of submitting.
 
 ## Development
 

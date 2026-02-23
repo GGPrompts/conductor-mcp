@@ -55,6 +55,9 @@ VOICE_POOL = [
 DEFAULT_CONFIG = {
     "max_concurrent_workers": 4,
     "default_layout": "2x2",
+    "min_pane_width": 80,
+    "min_pane_height": 24,
+    "conductor_mode": "session",  # future: "sidebar" | "popup"
     "voice": {
         "default": "en-US-AndrewNeural",  # Conductor's authoritative voice
         "rate": "+20%",
@@ -136,6 +139,71 @@ def release_worker_voice(worker_id: str) -> None:
         del assignments[worker_id]
         config["worker_voice_assignments"] = assignments
         save_config(config)
+
+
+def _find_best_split(
+    session: str,
+    min_w: int,
+    min_h: int,
+    target_pane: Optional[str] = None
+) -> dict:
+    """
+    Decide where to place a new worker pane.
+
+    Evaluates panes in the session and returns the best split action.
+    Prefers horizontal splits (side-by-side), falls back to vertical,
+    then new window if no pane can be split.
+
+    Returns:
+        {"action": "split_h"|"split_v"|"new_window", "target_pane": ..., "reason": ...}
+    """
+    panes = list_panes(session)
+    if not panes:
+        return {
+            "action": "new_window",
+            "target_pane": None,
+            "reason": "No panes found in session"
+        }
+
+    # If target_pane specified, only evaluate that one
+    if target_pane:
+        candidates = [p for p in panes if p["pane_id"] == target_pane]
+        if not candidates:
+            return {
+                "action": "new_window",
+                "target_pane": None,
+                "reason": f"Target pane {target_pane} not found"
+            }
+    else:
+        # Sort by area, largest first
+        candidates = sorted(panes, key=lambda p: p["width"] * p["height"], reverse=True)
+
+    for pane in candidates:
+        w, h = pane["width"], pane["height"]
+
+        # Check horizontal split (side-by-side): each half gets ~w/2
+        half_w = w // 2
+        if half_w >= min_w and h >= min_h:
+            return {
+                "action": "split_h",
+                "target_pane": pane["pane_id"],
+                "reason": f"Horizontal split of {pane['pane_id']} ({w}x{h}) -> 2x({half_w}x{h})"
+            }
+
+        # Check vertical split (stacked): each half gets ~h/2
+        half_h = h // 2
+        if w >= min_w and half_h >= min_h:
+            return {
+                "action": "split_v",
+                "target_pane": pane["pane_id"],
+                "reason": f"Vertical split of {pane['pane_id']} ({w}x{h}) -> 2x({w}x{half_h})"
+            }
+
+    return {
+        "action": "new_window",
+        "target_pane": None,
+        "reason": f"No pane large enough to split (need {min_w}x{min_h} per half)"
+    }
 
 
 @mcp.tool()
@@ -1211,6 +1279,175 @@ When done:
 
 
 # ═══════════════════════════════════════════════════════════════
+# SMART SPAWN (visible worker placement)
+# ═══════════════════════════════════════════════════════════════
+
+
+@mcp.tool()
+async def smart_spawn(
+    issue_id: str,
+    project_dir: str,
+    session: Optional[str] = None,
+    target_pane: Optional[str] = None,
+    profile_cmd: str = "claude",
+    inject_context: bool = True
+) -> dict:
+    """
+    Spawn a worker visibly in the current tmux session by auto-splitting panes.
+
+    Intelligently decides where to place the worker:
+    - Splits the largest pane if there's enough room
+    - Prefers horizontal (side-by-side) splits
+    - Creates a new window (tab) when no pane can be split
+
+    Unlike spawn_worker() which creates detached sessions, this keeps workers
+    visible in your current session as splits/tabs.
+
+    Args:
+        issue_id: Beads issue ID (e.g., "BD-abc")
+        project_dir: Path to the main project directory
+        session: Target tmux session (auto-detects if omitted)
+        target_pane: Specific pane to split (auto-selects largest if omitted)
+        profile_cmd: Command to run (default: "claude")
+        inject_context: Whether to inject beads context (default: True)
+
+    Returns:
+        Dict with worker info + placement decision
+    """
+    config = load_config()
+    min_w = config.get("min_pane_width", 80)
+    min_h = config.get("min_pane_height", 24)
+
+    # Resolve session
+    if not session:
+        result = subprocess.run(
+            ["tmux", "display-message", "-p", "#{session_name}"],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            session = result.stdout.strip()
+        else:
+            return {"error": "Not in a tmux session. Provide session parameter or use spawn_worker() for detached sessions."}
+
+    # Decide placement
+    placement = _find_best_split(session, min_w, min_h, target_pane)
+    action = placement["action"]
+
+    project_path = Path(project_dir).expanduser().resolve()
+
+    # Execute placement
+    if action == "split_h":
+        result = split_pane(
+            direction="horizontal",
+            target=placement["target_pane"],
+            start_dir=str(project_path)
+        )
+    elif action == "split_v":
+        result = split_pane(
+            direction="vertical",
+            target=placement["target_pane"],
+            start_dir=str(project_path)
+        )
+    else:  # new_window
+        result = create_window(
+            session=session,
+            name=issue_id,
+            start_dir=str(project_path)
+        )
+
+    if "error" in result:
+        return {"error": f"Failed to create pane: {result['error']}", "placement": placement}
+
+    new_pane_id = result.get("pane_id")
+    if not new_pane_id:
+        return {"error": "No pane_id returned from split/window creation", "placement": placement}
+
+    # Spawn worker in the new pane
+    worker_info = await spawn_worker_in_pane(
+        pane_id=new_pane_id,
+        issue_id=issue_id,
+        project_dir=project_dir,
+        profile_cmd=profile_cmd,
+        inject_context=inject_context
+    )
+
+    worker_info["placement"] = placement
+    return worker_info
+
+
+@mcp.tool()
+async def smart_spawn_wave(
+    issue_ids: str,
+    project_dir: str,
+    session: Optional[str] = None,
+    profile_cmd: str = "claude",
+    inject_context: bool = True
+) -> dict:
+    """
+    Spawn multiple workers visibly, auto-splitting panes as needed.
+
+    Each worker re-evaluates available space after the previous split,
+    so panes fill up naturally — splits when there's room, new windows when not.
+
+    Args:
+        issue_ids: Comma-separated beads issue IDs (e.g., "BD-abc,BD-def,BD-ghi")
+        project_dir: Path to the main project directory
+        session: Target tmux session (auto-detects if omitted)
+        profile_cmd: Command to run (default: "claude")
+        inject_context: Whether to inject beads context (default: True)
+
+    Returns:
+        Summary with total/spawned/failed counts and per-worker results
+    """
+    config = load_config()
+    max_workers = config.get("max_concurrent_workers", 4)
+
+    ids = [i.strip() for i in issue_ids.split(",") if i.strip()]
+    if not ids:
+        return {"error": "No issue IDs provided"}
+
+    if len(ids) > max_workers:
+        return {
+            "error": f"Requested {len(ids)} workers but max_concurrent_workers is {max_workers}. "
+                     f"Increase with set_config or reduce issue count.",
+            "requested": len(ids),
+            "max": max_workers
+        }
+
+    results = []
+    spawned = 0
+    failed = 0
+
+    for issue_id in ids:
+        worker_result = await smart_spawn(
+            issue_id=issue_id,
+            project_dir=project_dir,
+            session=session,
+            profile_cmd=profile_cmd,
+            inject_context=inject_context
+        )
+
+        if "error" in worker_result:
+            failed += 1
+            results.append({"issue_id": issue_id, "status": "failed", "error": worker_result["error"]})
+        else:
+            spawned += 1
+            results.append({
+                "issue_id": issue_id,
+                "status": "spawned",
+                "pane_id": worker_result.get("pane_id"),
+                "placement": worker_result.get("placement", {}).get("action")
+            })
+
+    return {
+        "total": len(ids),
+        "spawned": spawned,
+        "failed": failed,
+        "workers": results
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
 # REAL-TIME MONITORING (pipe-pane)
 # ═══════════════════════════════════════════════════════════════
 
@@ -1887,18 +2124,21 @@ def prompt_spawn_wave(project_dir: str, layout: str = "2x2") -> list[dict]:
     return [
         {
             "role": "user",
-            "content": f"""Create a {layout} grid and spawn workers for ready beads issues.
+            "content": f"""Spawn workers for ready beads issues, visible in the current session.
 
 Project: {project_dir}
 
 Steps:
 1. Run `bd ready` to get ready issues (not blocked)
-2. Create a {layout} grid with create_grid()
-3. For each pane and ready issue, use spawn_worker_in_pane()
+2. Collect issue IDs (up to max_concurrent_workers)
+3. Use smart_spawn_wave(issue_ids="ID1,ID2,...", project_dir="{project_dir}") to spawn all at once
+   - Workers appear as splits in the current window, overflowing to new tabs when needed
 4. Announce each spawn with speak()
-5. Report which workers were spawned
+5. Report which workers were spawned and where (split vs new window)
 
-Use the conductor MCP tools: create_grid, spawn_worker_in_pane, speak, list_panes"""
+Use the conductor MCP tools: smart_spawn_wave, speak, list_panes
+
+Note: For manual grid control, create_grid() + spawn_worker_in_pane() still work."""
         }
     ]
 
@@ -1942,12 +2182,12 @@ def prompt_orchestrate(project_dir: str) -> list[dict]:
 Phase 1 - Planning:
 1. Run `bd ready` to see available work
 2. Run `bd blocked` to see what's waiting on dependencies
-3. Decide how many workers to spawn (max 4 for 2x2 grid)
+3. Decide how many workers to spawn (up to max_concurrent_workers)
 
 Phase 2 - Spawning:
-1. Create grid layout with create_grid()
-2. Spawn workers with spawn_worker_in_pane() for each issue
-3. Announce "Wave started with N workers"
+1. Use smart_spawn_wave(issue_ids="ID1,ID2,...", project_dir="{project_dir}") to spawn all workers
+   - Workers appear as visible splits in the current session, overflowing to new tabs
+2. Announce "Wave started with N workers"
 
 Phase 3 - Monitoring:
 1. Periodically check worker status with list_panes()

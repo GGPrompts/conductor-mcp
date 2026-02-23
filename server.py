@@ -75,6 +75,7 @@ DEFAULT_CONFIG = {
         "claude": {"command": "claude"},
         "codex": {"command": "codex"},
         "gemini": {"command": "gemini -i"},
+        "copilot": {"command": "copilot"},
         "tfe": {"command": "tfe"},
         "lazygit": {"command": "lazygit"},
     },

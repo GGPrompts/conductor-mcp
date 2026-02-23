@@ -70,6 +70,14 @@ DEFAULT_CONFIG = {
     },
     "worker_voice_assignments": {},  # worker_id -> voice
     "voice_pool_index": 0,  # Tracks which voice to assign next
+    "default_dir": "",  # Global fallback project dir for profiles without pinned dir
+    "profiles": {
+        "claude": {"command": "claude"},
+        "codex": {"command": "codex"},
+        "gemini": {"command": "gemini -i"},
+        "tfe": {"command": "tfe"},
+        "lazygit": {"command": "lazygit"},
+    },
 }
 
 
@@ -93,6 +101,34 @@ def save_config(config: dict) -> None:
     """Save config to file."""
     with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=2)
+
+
+def resolve_profile(name_or_cmd: str) -> dict:
+    """
+    Resolve a profile name to command + dir.
+
+    If name matches a config profile, returns its settings.
+    Otherwise treats the input as a raw command (backward compat).
+
+    Returns:
+        {"command": str, "dir": str|None}
+    """
+    config = load_config()
+    profiles = config.get("profiles", {})
+    default_dir = config.get("default_dir", "") or None
+
+    if name_or_cmd in profiles:
+        profile = profiles[name_or_cmd]
+        return {
+            "command": profile["command"],
+            "dir": profile.get("dir") or default_dir,
+        }
+
+    # Not a profile name — treat as raw command
+    return {
+        "command": name_or_cmd,
+        "dir": default_dir,
+    }
 
 
 def get_worker_voice(worker_id: str) -> str:
@@ -1286,10 +1322,11 @@ When done:
 @mcp.tool()
 async def smart_spawn(
     issue_id: str,
-    project_dir: str,
+    project_dir: str = "",
     session: Optional[str] = None,
     target_pane: Optional[str] = None,
-    profile_cmd: str = "claude",
+    profile: str = "claude",
+    profile_cmd: str = "",
     inject_context: bool = True
 ) -> dict:
     """
@@ -1305,15 +1342,25 @@ async def smart_spawn(
 
     Args:
         issue_id: Beads issue ID (e.g., "BD-abc")
-        project_dir: Path to the main project directory
+        project_dir: Path to the main project directory (falls back to profile dir or default_dir)
         session: Target tmux session (auto-detects if omitted)
         target_pane: Specific pane to split (auto-selects largest if omitted)
-        profile_cmd: Command to run (default: "claude")
+        profile: Profile name from config (default: "claude"). See list_profiles().
+        profile_cmd: Raw command override (backward compat, takes precedence over profile)
         inject_context: Whether to inject beads context (default: True)
 
     Returns:
         Dict with worker info + placement decision
     """
+    # Resolve profile — explicit profile_cmd overrides profile name
+    resolved = resolve_profile(profile_cmd if profile_cmd else profile)
+    effective_cmd = resolved["command"]
+
+    # Resolve project_dir — explicit > profile pinned dir > default_dir
+    effective_dir = project_dir or resolved["dir"] or ""
+    if not effective_dir:
+        return {"error": "No project_dir provided and no default_dir configured. Set with set_config(default_dir=...) or add_profile()."}
+
     config = load_config()
     min_w = config.get("min_pane_width", 40)
     min_h = config.get("min_pane_height", 12)
@@ -1333,7 +1380,7 @@ async def smart_spawn(
     placement = _find_best_split(session, min_w, min_h, target_pane)
     action = placement["action"]
 
-    project_path = Path(project_dir).expanduser().resolve()
+    project_path = Path(effective_dir).expanduser().resolve()
 
     # Execute placement
     if action == "split_h":
@@ -1366,21 +1413,23 @@ async def smart_spawn(
     worker_info = await spawn_worker_in_pane(
         pane_id=new_pane_id,
         issue_id=issue_id,
-        project_dir=project_dir,
-        profile_cmd=profile_cmd,
+        project_dir=effective_dir,
+        profile_cmd=effective_cmd,
         inject_context=inject_context
     )
 
     worker_info["placement"] = placement
+    worker_info["profile"] = profile_cmd if profile_cmd else profile
     return worker_info
 
 
 @mcp.tool()
 async def smart_spawn_wave(
     issue_ids: str,
-    project_dir: str,
+    project_dir: str = "",
     session: Optional[str] = None,
-    profile_cmd: str = "claude",
+    profile: str = "claude",
+    profile_cmd: str = "",
     inject_context: bool = True
 ) -> dict:
     """
@@ -1391,9 +1440,10 @@ async def smart_spawn_wave(
 
     Args:
         issue_ids: Comma-separated beads issue IDs (e.g., "BD-abc,BD-def,BD-ghi")
-        project_dir: Path to the main project directory
+        project_dir: Path to the main project directory (falls back to profile dir or default_dir)
         session: Target tmux session (auto-detects if omitted)
-        profile_cmd: Command to run (default: "claude")
+        profile: Profile name from config (default: "claude"). See list_profiles().
+        profile_cmd: Raw command override (backward compat, takes precedence over profile)
         inject_context: Whether to inject beads context (default: True)
 
     Returns:
@@ -1423,6 +1473,7 @@ async def smart_spawn_wave(
             issue_id=issue_id,
             project_dir=project_dir,
             session=session,
+            profile=profile,
             profile_cmd=profile_cmd,
             inject_context=inject_context
         )
@@ -1989,6 +2040,101 @@ def rebalance_panes(target: Optional[str] = None) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════
+# PROFILE MANAGEMENT
+# ═══════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def add_profile(
+    name: str,
+    command: str,
+    dir: Optional[str] = None
+) -> dict:
+    """
+    Add or update a spawn profile.
+
+    Profiles let you spawn workers with different CLI tools (claude, codex, gemini, tfe, etc.)
+    without remembering exact command strings.
+
+    Args:
+        name: Profile name (e.g., "codex", "gemini", "tfe")
+        command: Shell command to run (e.g., "codex", "gemini -i", "tfe")
+        dir: Pinned project directory for this profile (optional, overrides default_dir)
+
+    Returns:
+        Updated profile dict
+    """
+    config = load_config()
+    if "profiles" not in config:
+        config["profiles"] = {}
+
+    profile = {"command": command}
+    if dir:
+        profile["dir"] = dir
+
+    config["profiles"][name] = profile
+    save_config(config)
+
+    return {
+        "name": name,
+        "profile": profile,
+        "status": "created" if name not in config.get("profiles", {}) else "updated"
+    }
+
+
+@mcp.tool()
+def remove_profile(name: str) -> str:
+    """
+    Remove a spawn profile.
+
+    Args:
+        name: Profile name to remove
+
+    Returns:
+        Confirmation message
+    """
+    config = load_config()
+    profiles = config.get("profiles", {})
+
+    if name not in profiles:
+        return f"Profile '{name}' not found. Available: {', '.join(profiles.keys())}"
+
+    del profiles[name]
+    config["profiles"] = profiles
+    save_config(config)
+    return f"Removed profile: {name}"
+
+
+@mcp.tool()
+def list_profiles() -> dict:
+    """
+    List all spawn profiles with resolved directories.
+
+    Shows each profile's command and effective directory (pinned dir or default_dir fallback).
+
+    Returns:
+        Dict with profiles list and default_dir
+    """
+    config = load_config()
+    profiles = config.get("profiles", {})
+    default_dir = config.get("default_dir", "") or None
+
+    result = []
+    for name, profile in profiles.items():
+        result.append({
+            "name": name,
+            "command": profile["command"],
+            "pinned_dir": profile.get("dir"),
+            "effective_dir": profile.get("dir") or default_dir,
+        })
+
+    return {
+        "profiles": result,
+        "default_dir": default_dir,
+        "count": len(result),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
 # CONFIGURATION TOOLS
 # ═══════════════════════════════════════════════════════════════
 
@@ -2011,6 +2157,7 @@ def get_config() -> dict:
 def set_config(
     max_concurrent_workers: Optional[int] = None,
     default_layout: Optional[str] = None,
+    default_dir: Optional[str] = None,
     default_voice: Optional[str] = None,
     voice_rate: Optional[str] = None,
     voice_pitch: Optional[str] = None,
@@ -2024,6 +2171,7 @@ def set_config(
     Args:
         max_concurrent_workers: Max workers to spawn (default: 4)
         default_layout: Default grid layout (default: "2x2")
+        default_dir: Global fallback project directory for profiles without a pinned dir
         default_voice: Default TTS voice
         voice_rate: Speech rate (e.g., "+0%", "+20%", "-10%")
         voice_pitch: Voice pitch (e.g., "+0Hz", "+50Hz")
@@ -2040,6 +2188,8 @@ def set_config(
         config["max_concurrent_workers"] = max_concurrent_workers
     if default_layout is not None:
         config["default_layout"] = default_layout
+    if default_dir is not None:
+        config["default_dir"] = default_dir
     if default_voice is not None:
         config["voice"]["default"] = default_voice
     if voice_rate is not None:

@@ -890,7 +890,7 @@ def create_window(
     Returns:
         Dict with window info
     """
-    args = ["tmux", "new-window", "-t", session, "-P",
+    args = ["tmux", "new-window", "-t", f"{session}:", "-a", "-P",
             "-F", "#{window_id}|#{window_index}|#{pane_id}"]
 
     if name:
@@ -1315,8 +1315,8 @@ async def smart_spawn(
         Dict with worker info + placement decision
     """
     config = load_config()
-    min_w = config.get("min_pane_width", 80)
-    min_h = config.get("min_pane_height", 24)
+    min_w = config.get("min_pane_width", 40)
+    min_h = config.get("min_pane_height", 12)
 
     # Resolve session
     if not session:

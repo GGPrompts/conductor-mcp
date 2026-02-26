@@ -1,0 +1,22 @@
+{
+  "name": "conductor-mcp",
+  "owner": {
+    "name": "GGPrompts"
+  },
+  "metadata": {
+    "description": "Orchestrate Claude Code workers with tmux — spawn, monitor, coordinate, and speak across parallel sessions",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "conductor",
+      "source": "./plugins/conductor",
+      "description": "MCP server + skills + hooks for orchestrating Claude Code workers via tmux",
+      "version": "1.0.0",
+      "author": {
+        "name": "GGPrompts"
+      },
+      "keywords": ["orchestration", "tmux", "workers", "mcp", "multi-agent", "tts"]
+    }
+  ]
+}

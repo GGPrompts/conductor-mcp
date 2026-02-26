@@ -1,0 +1,19 @@
+{
+  "name": "conductor",
+  "version": "1.0.0",
+  "description": "Orchestrate Claude Code workers with tmux — spawn, monitor, coordinate, and speak across parallel sessions",
+  "author": {
+    "name": "GGPrompts"
+  },
+  "homepage": "https://github.com/GGPrompts/conductor-mcp",
+  "repository": "https://github.com/GGPrompts/conductor-mcp",
+  "license": "MIT",
+  "keywords": ["orchestration", "tmux", "workers", "mcp", "multi-agent", "tts"],
+  "mcpServers": {
+    "conductor": {
+      "type": "stdio",
+      "command": "${CLAUDE_PLUGIN_ROOT}/run-server.sh",
+      "args": []
+    }
+  }
+}

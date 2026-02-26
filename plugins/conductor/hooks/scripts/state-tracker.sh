@@ -111,7 +111,8 @@ case "$HOOK_TYPE" in
         CURRENT_TOOL=$(echo "$STDIN_DATA" | jq -r '.tool_name // .tool // .name // "unknown"' 2>/dev/null || echo "unknown")
         TOOL_ARGS_STR=$(echo "$STDIN_DATA" | jq -c '.tool_input // .input // .parameters // {}' 2>/dev/null || echo '{}')
         DETAILS=$(jq -n --arg tool "$CURRENT_TOOL" --arg args "$TOOL_ARGS_STR" '{event:"tool_starting",tool:$tool,args:($args|fromjson)}' 2>/dev/null || echo '{"event":"tool_starting"}')
-        if [[ "$CURRENT_TOOL" == "Task" ]]; then increment_subagent_count; fi
+        # NOTE: subagent counting is handled by subagent-start/subagent-stop hooks,
+        # NOT here. PreToolUse fires even if the Task is denied or fails.
         if [[ "${CLAUDE_AUDIO:-0}" == "1" ]]; then
             TOOL_DETAIL=""
             case "$CURRENT_TOOL" in
@@ -138,6 +139,14 @@ case "$HOOK_TYPE" in
             SESSION_NAME="${CLAUDE_SESSION_NAME:-Claude}"
             "$SCRIPT_DIR/audio-announcer.sh" stop "$SESSION_NAME" &
         fi
+        ;;
+    subagent-start)
+        increment_subagent_count
+        SUBAGENT_COUNT=$(get_subagent_count)
+        STATUS="processing"
+        CURRENT_TOOL=""
+        AGENT_TYPE=$(echo "$STDIN_DATA" | jq -r '.agent_type // "unknown"' 2>/dev/null || echo "unknown")
+        DETAILS=$(jq -n --arg type "$AGENT_TYPE" --arg count "$SUBAGENT_COUNT" '{event:"subagent_started",agent_type:$type,active_subagents:($count|tonumber)}')
         ;;
     subagent-stop)
         decrement_subagent_count

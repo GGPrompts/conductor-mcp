@@ -7,7 +7,7 @@ MCP server providing orchestration tools for Claude Code workers.
 - **tmux** - Terminal multiplexer (pane/session management)
 - **edge-tts** - Text-to-speech (`pip install edge-tts`)
 - **Audio player** - mpv, ffplay, or vlc for TTS playback
-- **bd** (optional) - Beads CLI for issue tracking integration
+- **ggbd** (optional) - Beads CLI for issue tracking integration
 - **git** - For worktree management
 
 ## Tools (41 total)

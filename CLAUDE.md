@@ -7,7 +7,7 @@ MCP server providing orchestration tools for Claude Code workers.
 - **tmux** - Terminal multiplexer (pane/session management)
 - **edge-tts** - Text-to-speech (`pip install edge-tts`)
 - **Audio player** - mpv, ffplay, or vlc for TTS playback
-- **ggbd** (optional) - Beads CLI for issue tracking integration
+- **bd** (optional) - Beads CLI for issue tracking (`go install` from gastownhall/beads)
 - **git** - For worktree management
 
 ## Tools (41 total)
@@ -177,6 +177,10 @@ send_keys(new_pane_id, "tfe /path/to/CLAUDE.md --preview")
 
 TFE renders markdown beautifully and supports `--preview` to auto-open the preview pane with the file selected.
 
+## Companion TUI
+
+`tui/` contains a Go TUI (Bubble Tea) for visual session management. See [tui/CLAUDE.md](tui/CLAUDE.md) for details. Build with `cd tui && go build -o conductor-tui .`
+
 ## Key Pattern: The Delay Fix
 
 The `send_keys` tool handles the timing automatically:
@@ -216,6 +220,6 @@ Legacy implementations in `reference/`:
 - `state-tracker.sh` - Claude hook for state tracking
 - `tmux-status-claude.sh` - Tmux status bar integration
 
-## Beads Issue
+## Beads
 
-Tracked as BeadsHive-uz3
+Issues use prefix `cm` (e.g. cm-yk2). Backend is Dolt (embedded mode) with Hetzner remote for cross-device sync.

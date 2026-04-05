@@ -1,15 +1,15 @@
 # Agent Instructions
 
-This project uses **ggbd** (beads) for issue tracking with a shared Supabase/Postgres backend.
+This project uses **bd** (beads) for issue tracking with embedded Dolt databases and a Hetzner remote for syncing.
 
 ## Quick Reference
 
 ```bash
-ggbd ready              # Find available work
-ggbd show <id>          # View issue details
-ggbd update <id> --status in_progress  # Claim work
-ggbd close <id>         # Complete work
-# Supabase auto-syncs (no manual sync needed)
+bd ready              # Find available work
+bd show <id>          # View issue details
+bd update <id> --claim  # Claim work
+bd close <id>         # Complete work
+bd-push               # Sync to remote
 ```
 
 ## Landing The Plane (When Shipping)
@@ -61,7 +61,7 @@ bd close <id>         # Complete work
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
    git pull --rebase
-   bd dolt push
+   bd-push
    git push
    git status  # MUST show "up to date with origin"
    ```

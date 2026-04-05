@@ -1155,7 +1155,7 @@ def list_panes(session: Optional[str] = None) -> list[dict]:
                     pass  # State file corrupt or unreadable, continue without status
 
             panes.append({
-                "pane_id": parts[0],
+                "pane_id": pane_id,
                 "pane_index": int(parts[1]),
                 "window_index": int(parts[2]),
                 "width": int(parts[3]),

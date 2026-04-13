@@ -10,6 +10,11 @@
 
 set -euo pipefail
 
+# Portable helpers (Linux + macOS)
+portable_md5() { printf '%s' "$1" | md5sum 2>/dev/null | cut -d' ' -f1 || printf '%s' "$1" | md5 2>/dev/null; }
+file_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }
+millis_now() { python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || echo "$(( $(date +%s) * 1000 ))"; }
+
 EVENT="${1:-unknown}"
 SESSION_NAME="${2:-Claude}"
 DETAIL="${3:-}"  # Optional detail (filename, command, pattern, etc.)
@@ -40,15 +45,17 @@ VOICE_POOL=(
 # Get session-consistent random voice (hash session name to pick from pool)
 get_session_voice() {
     local session="$1"
-    local hash=$(echo -n "$session" | md5sum | cut -c1-8)
+    local hash=$(portable_md5 "$session" | cut -c1-8)
     local index=$((16#$hash % ${#VOICE_POOL[@]}))
     echo "${VOICE_POOL[$index]}"
 }
 
 # Apply config with env var overrides
-# If CLAUDE_VOICE is set, use it; otherwise pick random voice per session
+# Priority: CLAUDE_VOICE env > DEFAULT_VOICE from config > random per-session
 if [[ -n "${CLAUDE_VOICE:-}" ]]; then
     VOICE="$CLAUDE_VOICE"
+elif [[ -n "${DEFAULT_VOICE:-}" ]]; then
+    VOICE="$DEFAULT_VOICE"
 else
     # Use session name to get consistent random voice
     SESSION_ID="${CLAUDE_SESSION_ID:-${TMUX_PANE:-$$}}"
@@ -68,7 +75,6 @@ ANNOUNCE_READY="${ANNOUNCE_READY:-true}"
 # Audio directories
 AUDIO_DIR="/tmp/claude-audio-cache"
 CLIPS_DIR="${CUSTOM_CLIPS_DIR:-}"
-AUDIO_LOCK="/tmp/claude-audio.lock"
 DEBUG_LOG="/tmp/audio-debug.log"
 mkdir -p "$AUDIO_DIR"
 
@@ -78,21 +84,43 @@ mkdir -p "$AUDIO_DIR"
 # Tool announcements use nonblock (skip if busy)
 # Critical announcements (ready, session-start) wait briefly
 
-acquire_audio_lock() {
-    local wait_mode="${1:-nonblock}"  # nonblock or wait
-    exec 9>"$AUDIO_LOCK"
-    if [[ "$wait_mode" == "wait" ]]; then
-        # Wait up to 3 seconds for lock
-        flock -w 3 9 2>/dev/null || return 1
-    else
-        # Non-blocking: fail immediately if locked
-        flock --nonblock 9 2>/dev/null || return 1
+AUDIO_LOCK_DIR="/tmp/claude-audio.lock.d"
+AUDIO_LOCK_STALE_SECS=10
+
+# Break stale locks from killed processes (mkdir locks don't auto-release)
+_break_stale_lock() {
+    [[ -d "$AUDIO_LOCK_DIR" ]] || return
+    local age=$(( $(date +%s) - $(file_mtime "$AUDIO_LOCK_DIR") ))
+    if [[ $age -gt $AUDIO_LOCK_STALE_SECS ]]; then
+        rmdir "$AUDIO_LOCK_DIR" 2>/dev/null || true
     fi
+}
+
+acquire_audio_lock() {
+    local wait_mode="${1:-nonblock}"
+    _break_stale_lock
+    if [[ "$wait_mode" == "wait" ]]; then
+        local attempts=0
+        while ! mkdir "$AUDIO_LOCK_DIR" 2>/dev/null; do
+            attempts=$((attempts + 1))
+            if [[ $attempts -ge 30 ]]; then
+                # Last resort: force-break and try once more
+                rmdir "$AUDIO_LOCK_DIR" 2>/dev/null || true
+                mkdir "$AUDIO_LOCK_DIR" 2>/dev/null || return 1
+                break
+            fi
+            sleep 0.1
+        done
+    else
+        mkdir "$AUDIO_LOCK_DIR" 2>/dev/null || return 1
+    fi
+    # Touch the lock dir so staleness is measured from acquisition
+    touch "$AUDIO_LOCK_DIR" 2>/dev/null || true
     return 0
 }
 
 release_audio_lock() {
-    exec 9>&-
+    rmdir "$AUDIO_LOCK_DIR" 2>/dev/null || true
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -103,13 +131,14 @@ DEBOUNCE_FILE="/tmp/claude-audio-last-tool"
 should_debounce() {
     [[ "$DEBOUNCE_MS" == "0" ]] && return 1  # Debounce disabled
 
-    local now=$(date +%s%N | cut -c1-13)  # Current time in ms
+    local now=$(millis_now)
     local last=$(cat "$DEBOUNCE_FILE" 2>/dev/null || echo "0")
     local diff=$((now - last))
 
-    if (( diff < DEBOUNCE_MS )); then
+    if (( diff >= 0 && diff < DEBOUNCE_MS )); then
         return 0  # Should debounce (skip this announcement)
     fi
+    # Negative diff means stale/bogus timestamp — fall through and update
 
     echo "$now" > "$DEBOUNCE_FILE"
     return 1  # Don't debounce (play this announcement)
@@ -143,7 +172,7 @@ speak() {
     local text="$1"
     local sync_mode="${2:-async}"
     # Include voice + rate in cache key
-    local cache_key=$(echo "${VOICE}:${RATE}:${PITCH}:${text}" | md5sum | cut -d' ' -f1)
+    local cache_key=$(portable_md5 "${VOICE}:${RATE}:${PITCH}:${text}")
     local cache_file="$AUDIO_DIR/${cache_key}.mp3"
 
     echo "[$(date)] speak() text='$text' sync=$sync_mode cache=$cache_file" >> "$DEBUG_LOG"

@@ -4,6 +4,10 @@
 
 set -euo pipefail
 
+# Portable helpers (Linux + macOS)
+file_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }
+portable_md5() { printf '%s' "$1" | md5sum 2>/dev/null | cut -d' ' -f1 || printf '%s' "$1" | md5 2>/dev/null; }
+
 # Get script directory for relative paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -18,7 +22,7 @@ TMUX_PANE="${TMUX_PANE:-none}"
 
 # Read stdin if available (contains hook data from Claude)
 # Always try to read stdin with timeout to avoid hanging
-STDIN_DATA=$(timeout 0.1 cat 2>/dev/null || echo "")
+STDIN_DATA=$(cat 2>/dev/null || echo "")
 
 # Get session identifier - UNIFIED STRATEGY for both projects
 # Priority: 1. CLAUDE_SESSION_ID env var, 2. TMUX_PANE (for tmuxplexer), 3. Working directory hash (for terminal-tabs)
@@ -27,7 +31,7 @@ if [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
 elif [[ "$TMUX_PANE" != "none" && -n "$TMUX_PANE" ]]; then
     SESSION_ID=$(echo "$TMUX_PANE" | sed 's/[^a-zA-Z0-9_-]/_/g')
 elif [[ -n "$PWD" ]]; then
-    SESSION_ID=$(echo "$PWD" | md5sum | cut -d' ' -f1 | head -c 12)
+    SESSION_ID=$(portable_md5 "$PWD" | head -c 12)
 else
     SESSION_ID="$$"
 fi
@@ -39,29 +43,42 @@ get_subagent_count() {
     cat "$SUBAGENT_COUNT_FILE" 2>/dev/null || echo "0"
 }
 
+_subagent_lock_dir() { echo "$SUBAGENT_COUNT_FILE.lock.d"; }
+
+_subagent_lock_acquire() {
+    local lock_dir; lock_dir=$(_subagent_lock_dir)
+    local attempts=0
+    while ! mkdir "$lock_dir" 2>/dev/null; do
+        attempts=$((attempts + 1))
+        [[ $attempts -ge 20 ]] && return 1
+        sleep 0.05
+    done
+    return 0
+}
+
+_subagent_lock_release() { rmdir "$(_subagent_lock_dir)" 2>/dev/null || true; }
+
 increment_subagent_count() {
-    (
-        flock -x 200
-        local count=$(cat "$SUBAGENT_COUNT_FILE" 2>/dev/null || echo "0")
-        echo $((count + 1)) > "$SUBAGENT_COUNT_FILE"
-    ) 200>"$SUBAGENT_COUNT_FILE.lock"
+    _subagent_lock_acquire || return 0
+    local count=$(cat "$SUBAGENT_COUNT_FILE" 2>/dev/null || echo "0")
+    echo $((count + 1)) > "$SUBAGENT_COUNT_FILE"
+    _subagent_lock_release
 }
 
 decrement_subagent_count() {
-    (
-        flock -x 200
-        local count=$(cat "$SUBAGENT_COUNT_FILE" 2>/dev/null || echo "0")
-        local new_count=$((count - 1))
-        [[ $new_count -lt 0 ]] && new_count=0
-        echo "$new_count" > "$SUBAGENT_COUNT_FILE"
-    ) 200>"$SUBAGENT_COUNT_FILE.lock"
+    _subagent_lock_acquire || return 0
+    local count=$(cat "$SUBAGENT_COUNT_FILE" 2>/dev/null || echo "0")
+    local new_count=$((count - 1))
+    [[ $new_count -lt 0 ]] && new_count=0
+    echo "$new_count" > "$SUBAGENT_COUNT_FILE"
+    _subagent_lock_release
 }
 
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 HOOK_TYPE="${1:-unknown}"
 
 if [[ "$HOOK_TYPE" == "pre-tool" ]] || [[ "$HOOK_TYPE" == "post-tool" ]]; then
-    echo "$STDIN_DATA" > "$DEBUG_DIR/${HOOK_TYPE}-$(date +%s%N)-$$.json" 2>/dev/null || true
+    echo "$STDIN_DATA" > "$DEBUG_DIR/${HOOK_TYPE}-$(date +%s)-$$.json" 2>/dev/null || true
 fi
 
 case "$HOOK_TYPE" in
@@ -80,14 +97,14 @@ case "$HOOK_TYPE" in
                 if [[ "$active_panes" == *"$filename"* ]]; then continue; fi
                 if [[ "$filename" =~ ^_[0-9]+$ ]]; then rm -f "$file"; continue; fi
                 if [[ "$filename" =~ ^[a-f0-9]{12}$ ]]; then
-                    file_age=$(($(date +%s) - $(stat -c %Y "$file" 2>/dev/null || echo 0)))
+                    file_age=$(($(date +%s) - $(file_mtime "$file")))
                     if [[ $file_age -gt 3600 ]]; then rm -f "$file"; fi
                 fi
             done
             # Clean up context files older than 1 hour or orphaned (no parent state file)
             for file in "$STATE_DIR"/*-context.json; do
                 [[ -f "$file" ]] || continue
-                file_age=$(($(date +%s) - $(stat -c %Y "$file" 2>/dev/null || echo 0)))
+                file_age=$(($(date +%s) - $(file_mtime "$file")))
                 parent_file="${file/-context.json/.json}"
                 if [[ ! -f "$parent_file" ]] || [[ $file_age -gt 3600 ]]; then
                     rm -f "$file"
@@ -224,7 +241,7 @@ if [[ -n "$CLAUDE_SESSION_ID" ]]; then
     CONTEXT_FILE="$STATE_DIR/${CLAUDE_SESSION_ID}-context.json"
     if [[ -f "$CONTEXT_FILE" ]]; then
         # Check if context file is fresh (within 60 seconds)
-        CONTEXT_AGE=$(($(date +%s) - $(stat -c %Y "$CONTEXT_FILE" 2>/dev/null || echo 0)))
+        CONTEXT_AGE=$(($(date +%s) - $(file_mtime "$CONTEXT_FILE")))
         if [[ $CONTEXT_AGE -lt 60 ]]; then
             CONTEXT_PERCENT=$(jq -r '.context_pct // "null"' "$CONTEXT_FILE" 2>/dev/null || echo "null")
             CONTEXT_WINDOW_SIZE=$(jq -r '.context_window.context_window_size // "null"' "$CONTEXT_FILE" 2>/dev/null || echo "null")

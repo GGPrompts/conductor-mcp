@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Portable helpers (Linux + macOS)
+portable_md5() { printf '%s' "$1" | md5sum 2>/dev/null | cut -d' ' -f1 || printf '%s' "$1" | md5 2>/dev/null; }
+
 # Read JSON input from stdin
 input=$(cat)
 
@@ -33,7 +36,7 @@ elif [[ "${TMUX_PANE:-none}" != "none" && -n "${TMUX_PANE:-}" ]]; then
     # Use tmux pane ID (sanitize for filename - same as state-tracker.sh)
     SESSION_ID=$(echo "$TMUX_PANE" | sed 's/[^a-zA-Z0-9_-]/_/g')
 elif [[ -n "$current_dir" ]]; then
-    SESSION_ID=$(echo "$current_dir" | md5sum | cut -d' ' -f1 | head -c 12)
+    SESSION_ID=$(portable_md5 "$current_dir" | head -c 12)
 else
     SESSION_ID="$$"
 fi
@@ -124,6 +127,55 @@ if [ -n "$context_pct" ] && [ "$context_pct" != "null" ]; then
         ctx_color="$RED"
     fi
     status_parts+=("${ctx_color}${context_pct}% ctx${RESET}")
+fi
+
+# 6b. Cache Health Indicator
+# Detect broken cache: cache_read stuck at 0 while cache_creation is high
+if [ "$current_usage" != "null" ] && [ -n "$context_pct" ]; then
+    STATE_DIR="/tmp/claude-code-state"
+    CACHE_HEALTH_FILE="${STATE_DIR}/${SESSION_ID}-cache-health.json"
+
+    # Track cache history (rolling window of last checks)
+    if [ -f "$CACHE_HEALTH_FILE" ]; then
+        prev_checks=$(jq -r '.checks // 0' "$CACHE_HEALTH_FILE" 2>/dev/null)
+        prev_zero_reads=$(jq -r '.zero_reads // 0' "$CACHE_HEALTH_FILE" 2>/dev/null)
+    else
+        prev_checks=0
+        prev_zero_reads=0
+    fi
+
+    new_checks=$((prev_checks + 1))
+    if [ "$cache_read" -eq 0 ] && [ "$cache_creation" -gt 0 ]; then
+        new_zero_reads=$((prev_zero_reads + 1))
+    else
+        # Reset on any successful cache read
+        new_zero_reads=0
+    fi
+
+    # Write updated cache health
+    mkdir -p "$STATE_DIR"
+    printf '{"checks":%d,"zero_reads":%d,"last_read":%s,"last_creation":%s,"timestamp":"%s"}\n' \
+        "$new_checks" "$new_zero_reads" "$cache_read" "$cache_creation" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CACHE_HEALTH_FILE" 2>/dev/null
+
+    # Warn after 3+ consecutive zero-read checks (skip first 2 — cold start is normal)
+    if [ "$new_checks" -gt 2 ] && [ "$new_zero_reads" -ge 3 ]; then
+        status_parts+=("${RED}CACHE MISS${RESET}")
+    elif [ "$new_checks" -gt 2 ] && [ "$cache_read" -gt 0 ]; then
+        # Show cache hit ratio when healthy
+        cache_total=$((cache_read + cache_creation))
+        if [ "$cache_total" -gt 0 ]; then
+            cache_hit_pct=$((cache_read * 100 / cache_total))
+            dollar='$'
+            if [ "$cache_hit_pct" -gt 80 ]; then
+                status_parts+=("${GREEN}${cache_hit_pct}%${dollar}${RESET}")
+            elif [ "$cache_hit_pct" -gt 50 ]; then
+                status_parts+=("${YELLOW}${cache_hit_pct}%${dollar}${RESET}")
+            else
+                status_parts+=("${RED}${cache_hit_pct}%${dollar}${RESET}")
+            fi
+        fi
+    fi
 fi
 
 # 7. Claude Model (with subagent robots)

@@ -11,6 +11,18 @@ MCP server providing orchestration tools for Claude Code workers.
 - **git** - For worktree management
 - **jq** - JSON reader for hook scripts (reads audio section from `~/.config/conductor/config.json`)
 
+## CLI vs MCP policy (cm-aax)
+
+Conductor exposes two surfaces over the same `conductor.core`: the `conductor-mcp` server (agent-facing MCP tools) and the `cm` CLI (user/script-facing verbs). When adding a new operation, pick the surface by this rule:
+
+- **Rule:** call *frequency* and cache footprint drive the choice, not payload shape.
+- **MCP** is for blocking waits, subscriptions, complex typed returns fed straight into a tool-use loop, and trust-gated ops that benefit from per-tool permissions.
+- **CLI** is for one-shot verbs, writes, layout ops, and polling — anything agents or humans run once and read, or call in a Bash loop.
+- **Every `cm` subcommand exposes `--json`**, so structured output is always available; the MCP-vs-CLI split is about prompt footprint, not shape.
+- **Default `cm` output is terse TSV**: no header row, one record per line, ~50–500 bytes per invocation. Errors go to stderr; stdout stays parseable.
+- **Both surfaces call `conductor.core`** — zero logic duplication. `conductor.protocol` defines shared TypedDicts so CLI `--json` matches MCP return shapes field-for-field.
+- **Every shared-surface name must appear in both registries.** A parity test (cm-aax.3) enforces that rename/drift fails loud.
+
 ## Tools (34 total)
 
 User-facing configuration — voice, profiles, layout/timing — has moved to the conductor-tui Settings panel (cm-3gw). Open conductor-tui (`Ctrl+b o` in tmux, or run `conductor-tui`) and cycle the top panel with `1` until the Settings tab is active. Canonical config: `~/.config/conductor/config.json`.

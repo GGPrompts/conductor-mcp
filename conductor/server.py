@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-conductor-mcp: Terminal-only orchestration MCP server
+conductor.server — Terminal-only orchestration MCP server.
+
+Thin FastMCP wrapper around conductor.core. All pure helpers (config, voice
+allocation, layout math, context readers) live in conductor.core; all shared
+return-shape types live in conductor.protocol. The MCP @tool decorators in
+this file register the agent-facing surface.
 
 Brings TabzChrome's orchestration superpowers to any terminal.
 """
@@ -10,330 +15,37 @@ import hashlib
 import json
 import os
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 
+from conductor.core import (
+    AUDIO_CACHE_DIR,
+    AUDIO_LOCK_FILE,
+    DEFAULT_DELAY_MS,
+    STATE_DIR,
+    WATCH_DIR,
+    _find_best_split,
+    _get_context_from_state_files,
+    _get_context_from_terminal,
+    get_worker_voice,
+    list_panes_core,
+    load_config,
+    release_worker_voice,
+    resolve_profile,
+)
+from conductor.protocol import (
+    ContextPercent,
+    HookInfo,
+    PaneInfo,
+    SpawnResult,
+    WorkerInfo,
+    WorkerStatus,
+)
+
 # Initialize MCP server
 mcp = FastMCP("conductor")
-
-# Configuration
-STATE_DIR = Path("/tmp/claude-code-state")
-AUDIO_CACHE_DIR = Path("/tmp/conductor-audio-cache")
-
-# Canonical config path (cm-d64 decision)
-CONFIG_DIR = Path.home() / ".config" / "conductor"
-CONFIG_FILE = CONFIG_DIR / "config.json"
-
-# Legacy paths (read-once fallback on first run)
-LEGACY_MCP_CONFIG = Path.home() / ".config" / "conductor-mcp" / "config.json"
-LEGACY_TUI_CONFIG = Path.home() / ".config" / "conductor-tui" / "config.yaml"
-LEGACY_AUDIO_SHIM = Path.home() / ".claude" / "audio-config.sh"
-
-# Defaults (used in function signatures)
-DEFAULT_DELAY_MS = 800
-
-# Ensure directories exist (predictable /tmp paths — tighten perms to prevent
-# symlink / pre-populate attacks against md5 cache keys).
-STATE_DIR.mkdir(mode=0o700, exist_ok=True, parents=True)
-AUDIO_CACHE_DIR.mkdir(mode=0o700, exist_ok=True, parents=True)
-CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-
-# Available edge-tts voices (good variety for distinguishing workers)
-VOICE_POOL = [
-    "en-US-AriaNeural",      # Female, conversational
-    "en-US-GuyNeural",       # Male, conversational
-    "en-US-JennyNeural",     # Female, assistant
-    "en-US-DavisNeural",     # Male, calm
-    "en-US-AmberNeural",     # Female, warm
-    "en-US-AndrewNeural",    # Male, confident
-    "en-US-EmmaNeural",      # Female, friendly
-    "en-US-BrianNeural",     # Male, professional
-    "en-US-AnaNeural",       # Female, child-like
-    "en-US-ChristopherNeural", # Male, reliable
-    "en-GB-SoniaNeural",     # British female
-    "en-GB-RyanNeural",      # British male
-    "en-AU-NatashaNeural",   # Australian female
-    "en-AU-WilliamNeural",   # Australian male
-]
-
-# Default configuration
-DEFAULT_CONFIG = {
-    "max_concurrent_workers": 4,
-    "default_layout": "2x2",
-    "min_pane_width": 80,
-    "min_pane_height": 24,
-    "conductor_mode": "session",  # future: "sidebar" | "popup"
-    "voice": {
-        "default": "en-US-AndrewNeural",  # Conductor's authoritative voice
-        "rate": "+20%",
-        "pitch": "+0Hz",
-        "volume": "+0%",
-        "random_per_worker": True,
-        "enabled": True,
-    },
-    "delays": {
-        "send_keys_ms": 800,
-        "claude_boot_s": 4,
-    },
-    "worker_voice_assignments": {},  # worker_id -> voice
-    "voice_pool_index": 0,  # Tracks which voice to assign next
-    "default_dir": "",  # Global fallback project dir for profiles without pinned dir
-    "profiles": {
-        "claude": {"command": "claude"},
-        "codex": {"command": "codex"},
-        "gemini": {"command": "gemini -i"},
-        "copilot": {"command": "copilot"},
-        "tfe": {"command": "tfe"},
-        "lazygit": {"command": "lazygit"},
-    },
-}
-
-
-def _parse_audio_shim(path: Path) -> dict:
-    """Parse ~/.claude/audio-config.sh (simple VAR=value lines) for migration."""
-    result: dict = {}
-    try:
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if line.startswith("export "):
-                    line = line[len("export "):]
-                if "=" not in line:
-                    continue
-                key, _, value = line.partition("=")
-                key = key.strip()
-                value = value.strip().strip('"').strip("'")
-                result[key] = value
-    except (OSError, IOError):
-        pass
-    return result
-
-
-def _migrate_legacy_configs() -> dict:
-    """
-    One-shot migrator for cm-d64 canonical config.
-
-    Merges from legacy paths:
-    - ~/.config/conductor-mcp/config.json -> mcp + audio + profiles sections
-    - ~/.config/conductor-tui/config.yaml -> tui section (best-effort)
-    - ~/.claude/audio-config.sh           -> audio section (VAR=value)
-
-    Returns merged config. Leaves legacy files in place.
-    """
-    merged = DEFAULT_CONFIG.copy()
-
-    # Legacy MCP config — pre-existing top-level shape (already matches current)
-    if LEGACY_MCP_CONFIG.exists():
-        try:
-            with open(LEGACY_MCP_CONFIG) as f:
-                legacy = json.load(f)
-            for k, v in legacy.items():
-                merged[k] = v
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    # Legacy audio shim (bash VAR=value) — overlay on voice/delay section
-    if LEGACY_AUDIO_SHIM.exists():
-        shim = _parse_audio_shim(LEGACY_AUDIO_SHIM)
-        if shim:
-            voice = merged.setdefault("voice", {})
-            if "VOICE" in shim:
-                voice["default"] = shim["VOICE"]
-            if "VOICE_RATE" in shim:
-                voice["rate"] = shim["VOICE_RATE"]
-            if "VOICE_PITCH" in shim:
-                voice["pitch"] = shim["VOICE_PITCH"]
-
-    # Legacy TUI YAML — best-effort, optional PyYAML
-    if LEGACY_TUI_CONFIG.exists():
-        try:
-            import yaml  # optional
-            with open(LEGACY_TUI_CONFIG) as f:
-                tui_legacy = yaml.safe_load(f) or {}
-            merged["tui"] = tui_legacy
-        except (ImportError, OSError, Exception):
-            pass
-
-    return merged
-
-
-def load_config() -> dict:
-    """Load config from canonical file. Migrate from legacy paths on first run."""
-    if CONFIG_FILE.exists():
-        try:
-            with open(CONFIG_FILE) as f:
-                config = json.load(f)
-                # Merge with defaults for any missing keys
-                for key, value in DEFAULT_CONFIG.items():
-                    if key not in config:
-                        config[key] = value
-                return config
-        except (json.JSONDecodeError, IOError):
-            pass
-
-    # Canonical absent — perform one-shot migration from legacy paths
-    merged = _migrate_legacy_configs()
-    try:
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(merged, f, indent=2)
-        import sys
-        print(
-            f"conductor: migrated config to {CONFIG_FILE}",
-            file=sys.stderr,
-        )
-    except OSError:
-        pass
-    return merged
-
-
-def save_config(config: dict) -> None:
-    """Save config to file."""
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config, f, indent=2)
-
-
-def resolve_profile(name_or_cmd: str) -> dict:
-    """
-    Resolve a profile name to command + dir.
-
-    If name matches a config profile, returns its settings.
-    Otherwise treats the input as a raw command (backward compat).
-
-    Returns:
-        {"command": str, "dir": str|None}
-    """
-    config = load_config()
-    profiles = config.get("profiles", {})
-    default_dir = config.get("default_dir", "") or None
-
-    if name_or_cmd in profiles:
-        profile = profiles[name_or_cmd]
-        return {
-            "command": profile["command"],
-            "dir": profile.get("dir") or default_dir,
-        }
-
-    # Not a profile name — treat as raw command
-    return {
-        "command": name_or_cmd,
-        "dir": default_dir,
-    }
-
-
-def get_worker_voice(worker_id: str) -> str:
-    """Get or assign a unique voice for a worker."""
-    config = load_config()
-
-    if not config["voice"]["random_per_worker"]:
-        return config["voice"]["default"]
-
-    assignments = config.get("worker_voice_assignments", {})
-
-    # Already assigned?
-    if worker_id in assignments:
-        return assignments[worker_id]
-
-    # Find next unused voice
-    used_voices = set(assignments.values())
-    pool_index = config.get("voice_pool_index", 0)
-
-    # Try to find an unused voice, cycling through pool
-    for i in range(len(VOICE_POOL)):
-        voice = VOICE_POOL[(pool_index + i) % len(VOICE_POOL)]
-        if voice not in used_voices:
-            assignments[worker_id] = voice
-            config["worker_voice_assignments"] = assignments
-            config["voice_pool_index"] = (pool_index + i + 1) % len(VOICE_POOL)
-            save_config(config)
-            return voice
-
-    # All voices used, cycle through anyway
-    voice = VOICE_POOL[pool_index % len(VOICE_POOL)]
-    assignments[worker_id] = voice
-    config["worker_voice_assignments"] = assignments
-    config["voice_pool_index"] = (pool_index + 1) % len(VOICE_POOL)
-    save_config(config)
-    return voice
-
-
-def release_worker_voice(worker_id: str) -> None:
-    """Release a worker's voice assignment when killed."""
-    config = load_config()
-    assignments = config.get("worker_voice_assignments", {})
-    if worker_id in assignments:
-        del assignments[worker_id]
-        config["worker_voice_assignments"] = assignments
-        save_config(config)
-
-
-def _find_best_split(
-    session: str,
-    min_w: int,
-    min_h: int,
-    target_pane: Optional[str] = None
-) -> dict:
-    """
-    Decide where to place a new worker pane.
-
-    Evaluates panes in the session and returns the best split action.
-    Prefers horizontal splits (side-by-side), falls back to vertical,
-    then new window if no pane can be split.
-
-    Returns:
-        {"action": "split_h"|"split_v"|"new_window", "target_pane": ..., "reason": ...}
-    """
-    panes = list_panes(session)
-    if not panes:
-        return {
-            "action": "new_window",
-            "target_pane": None,
-            "reason": "No panes found in session"
-        }
-
-    # If target_pane specified, only evaluate that one
-    if target_pane:
-        candidates = [p for p in panes if p["pane_id"] == target_pane]
-        if not candidates:
-            return {
-                "action": "new_window",
-                "target_pane": None,
-                "reason": f"Target pane {target_pane} not found"
-            }
-    else:
-        # Sort by area, largest first
-        candidates = sorted(panes, key=lambda p: p["width"] * p["height"], reverse=True)
-
-    for pane in candidates:
-        w, h = pane["width"], pane["height"]
-
-        # Check horizontal split (side-by-side): each half gets ~w/2
-        half_w = w // 2
-        if half_w >= min_w and h >= min_h:
-            return {
-                "action": "split_h",
-                "target_pane": pane["pane_id"],
-                "reason": f"Horizontal split of {pane['pane_id']} ({w}x{h}) -> 2x({half_w}x{h})"
-            }
-
-        # Check vertical split (stacked): each half gets ~h/2
-        half_h = h // 2
-        if w >= min_w and half_h >= min_h:
-            return {
-                "action": "split_v",
-                "target_pane": pane["pane_id"],
-                "reason": f"Vertical split of {pane['pane_id']} ({w}x{h}) -> 2x({w}x{half_h})"
-            }
-
-    return {
-        "action": "new_window",
-        "target_pane": None,
-        "reason": f"No pane large enough to split (need {min_w}x{min_h} per half)"
-    }
 
 
 @mcp.tool()
@@ -478,10 +190,6 @@ When done:
         "branch": branch_name,
         "context_injected": bool(context_text)
     }
-
-
-# Audio mutex - shared with audio-announcer.sh hooks
-AUDIO_LOCK_FILE = Path("/tmp/claude-audio.lock")
 
 
 @mcp.tool()
@@ -1226,52 +934,9 @@ def list_panes(session: Optional[str] = None) -> list[dict]:
         session: Session name (default: current session, all windows)
 
     Returns:
-        List of pane info dicts
+        List of pane info dicts (see conductor.protocol.PaneInfo)
     """
-    args = ["tmux", "list-panes", "-F",
-            "#{pane_id}|#{pane_index}|#{window_index}|#{pane_width}|#{pane_height}|#{pane_current_command}|#{pane_current_path}|#{pane_active}"]
-
-    if session:
-        args.extend(["-s", "-t", session])  # -s = all panes in session
-    else:
-        args.append("-s")  # All panes in current session
-
-    result = subprocess.run(args, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        return []
-
-    panes = []
-    for line in result.stdout.strip().split("\n"):
-        if not line:
-            continue
-        parts = line.split("|")
-        if len(parts) >= 8:
-            pane_id = parts[0]
-            # Check for Claude status
-            status = None
-            state_file = STATE_DIR / f"{pane_id.replace('%', '_')}.json"
-            if state_file.exists():
-                try:
-                    with open(state_file) as f:
-                        state = json.load(f)
-                        status = state.get("status")
-                except (json.JSONDecodeError, IOError):
-                    pass  # State file corrupt or unreadable, continue without status
-
-            panes.append({
-                "pane_id": pane_id,
-                "pane_index": int(parts[1]),
-                "window_index": int(parts[2]),
-                "width": int(parts[3]),
-                "height": int(parts[4]),
-                "command": parts[5],
-                "path": parts[6],
-                "active": parts[7] == "1",
-                "claude_status": status
-            })
-
-    return panes
+    return list_panes_core(session)
 
 
 @mcp.tool()
@@ -1607,9 +1272,6 @@ async def smart_spawn_wave(
 # ═══════════════════════════════════════════════════════════════
 # REAL-TIME MONITORING (pipe-pane)
 # ═══════════════════════════════════════════════════════════════
-
-WATCH_DIR = Path("/tmp/conductor-watch")
-WATCH_DIR.mkdir(exist_ok=True)
 
 
 @mcp.tool()
@@ -2326,5 +1988,14 @@ Note: voice assignments are managed by the user in the conductor-tui Settings pa
     ]
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Console-script entry point: run the FastMCP stdio server.
+
+    Wired via pyproject.toml [project.scripts]:
+        conductor-mcp = "conductor.server:main"
+    """
     mcp.run()
+
+
+if __name__ == "__main__":
+    main()

@@ -424,7 +424,7 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // voicePreambleLines is the number of content lines rendered before the first
 // cursor-addressable row in the Voice section of Settings. It must stay in
 // sync with updateSettingsContent (model.go); breaking this invariant causes
-// the ► cursor to scroll off-screen (cm-cjk / cm-06j).
+// the ► cursor to scroll off-screen (cm-cjk / cm-06j / cm-y7t).
 //
 // Layout (indices in m.settingsContent):
 //   0:            tabs row (Voice | Profiles | Timing)
@@ -434,27 +434,40 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 //   4:            DETAILS:detail:current
 //   5:            blank
 //   6:            DETAILS:header:Voice settings
-//   7:            rate row            (cursor 0)
-//   8:            pitch row           (cursor 1)
-//   9:            random toggle row   (cursor 2)
-//   10:           blank
-//   11:           DETAILS:header:Pick a voice
-//   12..11+N:     voice pool entries  (cursors 3..2+N)
-//   12+N:         blank
-//   13+N:         DETAILS:header:Actions
-//   14+N:         reset action row    (cursor 3+N)
+//   7:            enabled toggle row  (cursor 0)
+//   8:            rate row            (cursor 1)
+//   9:            pitch row           (cursor 2)
+//   10:           volume row          (cursor 3)
+//   11:           random toggle row   (cursor 4)
+//   12:           blank
+//   13:           DETAILS:header:Pick a voice
+//   14..13+N:     voice pool entries  (cursors 5..4+N)
+//   14+N:         blank
+//   15+N:         DETAILS:header:Actions
+//   16+N:         reset action row    (cursor 5+N)
 const voicePreambleLines = 7
 
 // voicePoolStart is the first cursor index for the voice pool in the Voice
-// section (after rate, pitch, random-per-worker rows). Kept as a single
-// constant so the four call sites (model.go renderer, voiceCursorLine, the
-// Enter handler, and the "t" test-only handler) stay in lockstep.
-const voicePoolStart = 3
+// section (after enabled toggle, rate, pitch, volume, random-per-worker
+// rows — 5 preamble cursors total). Kept as a single constant so the four
+// call sites (model.go renderer, voiceCursorLine, the Enter handler, and
+// the "t" test-only handler) stay in lockstep (cm-y7t).
+const voicePoolStart = 5
+
+// Cursor indices for the fixed voice-setting rows (cm-y7t). Central so
+// handlers and the renderer stay consistent.
+const (
+	voiceCursorEnabled = 0
+	voiceCursorRate    = 1
+	voiceCursorPitch   = 2
+	voiceCursorVolume  = 3
+	voiceCursorRandom  = 4
+)
 
 // voiceSectionCursorCount returns the total number of cursor positions in the
-// Voice section: rate + pitch + random + all voices + reset.
+// Voice section: enabled + rate + pitch + volume + random + all voices + reset.
 func voiceSectionCursorCount() int {
-	return 3 + len(voicePool) + 1
+	return voicePoolStart + len(voicePool) + 1
 }
 
 // voiceCursorLine returns the content-line index (into m.settingsContent) of
@@ -748,12 +761,12 @@ func (m model) isSettingsTextEntry() bool {
 	return false
 }
 
-// adjustVoiceRatePitch is the shared left/right handler for the rate (cursor
-// 0) and pitch (cursor 1) rows in the Voice section. delta is signed — +5
-// for right/"l", -5 for left/"h". Other cursor positions are a no-op.
+// adjustVoiceRatePitch is the shared left/right handler for the rate, pitch,
+// and volume stepper rows in the Voice section. delta is signed — +5 for
+// right/"l", -5 for left/"h". Other cursor positions are a no-op (cm-y7t).
 func (m *model) adjustVoiceRatePitch(delta int) {
 	switch m.settingsCursor {
-	case 0: // rate
+	case voiceCursorRate:
 		newRate := adjustVoiceRatePercent(settingsGetVoiceRate(), delta)
 		if err := settingsSaveVoiceRate(newRate); err != nil {
 			m.statusMsg = "Failed to save rate: " + err.Error()
@@ -761,12 +774,20 @@ func (m *model) adjustVoiceRatePitch(delta int) {
 			m.statusMsg = "Rate: " + newRate
 		}
 		m.updateSettingsContent()
-	case 1: // pitch
+	case voiceCursorPitch:
 		newPitch := adjustVoicePitchHz(settingsGetVoicePitch(), delta)
 		if err := settingsSaveVoicePitch(newPitch); err != nil {
 			m.statusMsg = "Failed to save pitch: " + err.Error()
 		} else {
 			m.statusMsg = "Pitch: " + newPitch
+		}
+		m.updateSettingsContent()
+	case voiceCursorVolume:
+		newVol := adjustVoiceVolumePercent(settingsGetVoiceVolume(), delta)
+		if err := settingsSaveVoiceVolume(newVol); err != nil {
+			m.statusMsg = "Failed to save volume: " + err.Error()
+		} else {
+			m.statusMsg = "Volume: " + newVol
 		}
 		m.updateSettingsContent()
 	}
@@ -832,11 +853,24 @@ func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return m, nil, false
 
 	case " ", "space":
-		// Space toggles random-per-worker when cursor is on that row. On
-		// other voice-section rows it's a no-op (swallowed so the outer
-		// toggleSelection doesn't fire).
+		// Space toggles the two boolean rows (enabled, random-per-worker).
+		// On other voice-section rows it's a no-op (swallowed so the outer
+		// toggleSelection doesn't fire) (cm-y7t).
 		if m.settingsSection == settingsSectionVoice {
-			if m.settingsCursor == 2 {
+			switch m.settingsCursor {
+			case voiceCursorEnabled:
+				next := !settingsGetVoiceEnabled()
+				if err := settingsSaveVoiceEnabled(next); err != nil {
+					m.statusMsg = "Failed to save enabled: " + err.Error()
+				} else {
+					if next {
+						m.statusMsg = "Audio: on"
+					} else {
+						m.statusMsg = "Audio: off"
+					}
+				}
+				m.updateSettingsContent()
+			case voiceCursorRandom:
 				next := !settingsGetRandomPerWorker()
 				if err := settingsSaveRandomPerWorker(next); err != nil {
 					m.statusMsg = "Failed to save random_per_worker: " + err.Error()
@@ -885,12 +919,13 @@ func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		case settingsSectionVoice:
 			resetCursor := voicePoolStart + len(voicePool)
 			switch {
-			case m.settingsCursor == 0 || m.settingsCursor == 1:
-				// Rate/pitch rows: preview the current default voice with the
-				// new rate/pitch settings. Values are already persisted on
-				// left/right, so Enter is a convenience "hear it now".
+			case m.settingsCursor == voiceCursorRate || m.settingsCursor == voiceCursorPitch || m.settingsCursor == voiceCursorVolume:
+				// Rate/pitch/volume rows: preview the current default voice
+				// with the new settings. Values are already persisted on
+				// left/right, so Enter is a convenience "hear it now"
+				// (cm-y7t).
 				voice := settingsGetVoice()
-				m.statusMsg = "Preview: " + voice + " (rate " + settingsGetVoiceRate() + ", pitch " + settingsGetVoicePitch() + ")"
+				m.statusMsg = "Preview: " + voice + " (rate " + settingsGetVoiceRate() + ", pitch " + settingsGetVoicePitch() + ", volume " + settingsGetVoiceVolume() + ")"
 				outCmd = testVoiceCmd(voice, settingsGetVoiceRate(), "")
 			case m.settingsCursor >= voicePoolStart && m.settingsCursor < resetCursor:
 				// Save selected voice + preview it

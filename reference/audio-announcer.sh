@@ -45,18 +45,38 @@ get_session_voice() {
     echo "${VOICE_POOL[$index]}"
 }
 
-# Apply config with env var overrides
-# If CLAUDE_VOICE is set, use it; otherwise pick random voice per session
-if [[ -n "${CLAUDE_VOICE:-}" ]]; then
+# ═══════════════════════════════════════════════════════════════
+# CANONICAL CONFIG BRIDGE (cm-y7t)
+# ═══════════════════════════════════════════════════════════════
+# Canonical config is the single source of truth for voice/audio. env
+# CLAUDE_* vars are kept as fallback only, for users who haven't migrated.
+# Read each key independently so a partial canonical config still falls
+# back per-key to CLAUDE_* envs.
+CONDUCTOR_CONFIG="$HOME/.config/conductor/config.json"
+cfg_voice() {
+    local key="$1"
+    [[ -f "$CONDUCTOR_CONFIG" ]] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+    local v
+    v=$(jq -r ".voice.${key} // empty" "$CONDUCTOR_CONFIG" 2>/dev/null || echo "")
+    [[ -n "$v" ]] || return 1
+    printf '%s' "$v"
+}
+
+# Apply config with env var overrides.
+# Voice precedence: canonical voice.default -> CLAUDE_VOICE env -> per-session random
+if CFG_VOICE=$(cfg_voice default); then
+    VOICE="$CFG_VOICE"
+elif [[ -n "${CLAUDE_VOICE:-}" ]]; then
     VOICE="$CLAUDE_VOICE"
 else
     # Use session name to get consistent random voice
     SESSION_ID="${CLAUDE_SESSION_ID:-${TMUX_PANE:-$$}}"
     VOICE=$(get_session_voice "$SESSION_ID")
 fi
-RATE="${CLAUDE_RATE:-${DEFAULT_RATE:-+0%}}"
-PITCH="${CLAUDE_PITCH:-${DEFAULT_PITCH:-+0Hz}}"
-VOLUME="${CLAUDE_VOLUME:-${DEFAULT_VOLUME:-+0%}}"
+RATE="$(cfg_voice rate || echo "${CLAUDE_RATE:-${DEFAULT_RATE:-+0%}}")"
+PITCH="$(cfg_voice pitch || echo "${CLAUDE_PITCH:-${DEFAULT_PITCH:-+0Hz}}")"
+VOLUME="$(cfg_voice volume || echo "${CLAUDE_VOLUME:-${DEFAULT_VOLUME:-+0%}}")"
 SPEED="${CLAUDE_SPEED:-${PLAYBACK_SPEED:-1.0}}"
 DEBOUNCE_MS="${TOOL_DEBOUNCE_MS:-1000}"
 

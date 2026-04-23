@@ -108,6 +108,31 @@ func settingsGetRandomPerWorker() bool {
 	return true
 }
 
+// settingsGetVoiceVolume returns the current voice volume. Mirrors
+// voice.rate/pitch getters — edge-tts expects "+XX%" form (cm-y7t).
+func settingsGetVoiceVolume() string {
+	root := loadCanonicalRoot()
+	if voice, ok := root["voice"].(map[string]interface{}); ok {
+		if v, ok := voice["volume"].(string); ok && v != "" {
+			return v
+		}
+	}
+	return "+0%"
+}
+
+// settingsGetVoiceEnabled returns the canonical audio on/off toggle. Gates
+// both MCP speak() and state-tracker chimes (cm-y7t). Default is true to
+// match server.py DEFAULT_CONFIG.
+func settingsGetVoiceEnabled() bool {
+	root := loadCanonicalRoot()
+	if voice, ok := root["voice"].(map[string]interface{}); ok {
+		if b, ok := voice["enabled"].(bool); ok {
+			return b
+		}
+	}
+	return true
+}
+
 // saveVoiceKey is the shared load-mutate-save helper for the root["voice"]
 // section. All settingsSaveVoice* callers delegate here so there's one place
 // to update if the schema shifts (cm-d64, cm-06j).
@@ -149,6 +174,33 @@ func settingsSaveVoicePitch(pitch string) error {
 // (cm-06j, cm-3gw).
 func settingsSaveRandomPerWorker(val bool) error {
 	return saveVoiceKey("random_per_worker", val)
+}
+
+// settingsSaveVoiceVolume persists voice.volume. edge-tts expects "+XX%"
+// form (cm-y7t).
+func settingsSaveVoiceVolume(volume string) error {
+	return saveVoiceKey("volume", volume)
+}
+
+// settingsSaveVoiceEnabled persists the canonical audio on/off toggle
+// (cm-y7t).
+func settingsSaveVoiceEnabled(val bool) error {
+	return saveVoiceKey("enabled", val)
+}
+
+// adjustVoiceVolumePercent returns volume + deltaPct, clamped to [-100,
+// +100]. edge-tts accepts "+XX%" / "-XX%" — mirrors the rate stepper UX
+// (cm-y7t).
+func adjustVoiceVolumePercent(volume string, deltaPct int) string {
+	n := parseSignedNumber(volume, "%")
+	n += deltaPct
+	if n < -100 {
+		n = -100
+	}
+	if n > 100 {
+		n = 100
+	}
+	return formatSigned(n) + "%"
 }
 
 // settingsResetVoiceAssignments clears the worker_voice_assignments map and
@@ -246,7 +298,9 @@ func cursorMarker(selected bool) string {
 
 // testVoice shells out to edge-tts + mpv to preview a voice.
 // Matches server.py's speak() invocation pattern: generate to a tempfile,
-// then play with mpv. Does not require the MCP server.
+// then play with mpv. Does not require the MCP server. Reads pitch +
+// volume from canonical config so previews match production output
+// (cm-y7t).
 func testVoice(voice, rate, text string) error {
 	if text == "" {
 		text = "Hello, I am your conductor assistant."
@@ -254,6 +308,8 @@ func testVoice(voice, rate, text string) error {
 	if rate == "" {
 		rate = "+20%"
 	}
+	pitch := settingsGetVoicePitch()
+	volume := settingsGetVoiceVolume()
 	// Write to a unique temp mp3 so mpv has a concrete file. Using
 	// os.CreateTemp avoids a predictable-path symlink attack and prevents
 	// concurrent-call collisions between overlapping previews.
@@ -270,6 +326,8 @@ func testVoice(voice, rate, text string) error {
 		"edge-tts",
 		"--voice", voice,
 		"--rate", rate,
+		"--pitch", pitch,
+		"--volume", volume,
 		"--text", text,
 		"--write-media", tmp,
 	)

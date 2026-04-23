@@ -63,6 +63,29 @@ decrement_subagent_count() {
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 HOOK_TYPE="${1:-unknown}"
 
+# ═══════════════════════════════════════════════════════════════
+# AUDIO ENABLED CHECK (cm-y7t)
+# ═══════════════════════════════════════════════════════════════
+# Canonical config is the single source of truth. If voice.enabled is
+# present in ~/.config/conductor/config.json, honor it. Otherwise fall
+# back to CLAUDE_AUDIO env var (backwards compat).
+audio_is_enabled() {
+    local cfg="$HOME/.config/conductor/config.json"
+    if [[ -f "$cfg" ]] && command -v jq >/dev/null 2>&1; then
+        # jq's // operator treats `false` as a missing value, so use an
+        # explicit `has()` check to detect the key's presence separately.
+        local present
+        present=$(jq -r 'if (.voice // {}) | has("enabled") then "1" else "0" end' "$cfg" 2>/dev/null || echo "0")
+        if [[ "$present" == "1" ]]; then
+            local v
+            v=$(jq -r '.voice.enabled' "$cfg" 2>/dev/null || echo "false")
+            [[ "$v" == "true" ]] && return 0 || return 1
+        fi
+    fi
+    # Fallback: CLAUDE_AUDIO=1 enables chimes
+    [[ "${CLAUDE_AUDIO:-0}" == "1" ]]
+}
+
 if [[ "$HOOK_TYPE" == "pre-tool" ]] || [[ "$HOOK_TYPE" == "post-tool" ]]; then
     echo "$STDIN_DATA" > "$DEBUG_DIR/${HOOK_TYPE}-$(date +%s%N)-$$.json" 2>/dev/null || true
 fi
@@ -98,7 +121,7 @@ case "$HOOK_TYPE" in
             done
             find "$DEBUG_DIR" -name "*.json" -mmin +60 -delete 2>/dev/null || true
         ) &
-        if [[ "${CLAUDE_AUDIO:-0}" == "1" ]]; then
+        if audio_is_enabled; then
             SESSION_NAME="${CLAUDE_SESSION_NAME:-Claude}"
             "$SCRIPT_DIR/audio-announcer.sh" session-start "$SESSION_NAME" &
         fi
@@ -115,7 +138,7 @@ case "$HOOK_TYPE" in
         TOOL_ARGS_STR=$(echo "$STDIN_DATA" | jq -c '.tool_input // .input // .parameters // {}' 2>/dev/null || echo '{}')
         DETAILS=$(jq -n --arg tool "$CURRENT_TOOL" --arg args "$TOOL_ARGS_STR" '{event:"tool_starting",tool:$tool,args:($args|fromjson)}' 2>/dev/null || echo '{"event":"tool_starting"}')
         if [[ "$CURRENT_TOOL" == "Task" ]]; then increment_subagent_count; fi
-        if [[ "${CLAUDE_AUDIO:-0}" == "1" ]]; then
+        if audio_is_enabled; then
             TOOL_DETAIL=""
             case "$CURRENT_TOOL" in
                 Read|Write|Edit) TOOL_DETAIL=$(echo "$STDIN_DATA" | jq -r '.tool_input.file_path // .input.file_path // ""' 2>/dev/null | xargs basename 2>/dev/null || echo "") ;;
@@ -137,7 +160,7 @@ case "$HOOK_TYPE" in
         STATUS="awaiting_input"
         CURRENT_TOOL=""
         DETAILS='{"event":"claude_stopped","waiting_for_user":true}'
-        if [[ "${CLAUDE_AUDIO:-0}" == "1" ]]; then
+        if audio_is_enabled; then
             SESSION_NAME="${CLAUDE_SESSION_NAME:-Claude}"
             "$SCRIPT_DIR/audio-announcer.sh" stop "$SESSION_NAME" &
         fi

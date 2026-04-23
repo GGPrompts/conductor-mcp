@@ -69,7 +69,9 @@ DEFAULT_CONFIG = {
         "default": "en-US-AndrewNeural",  # Conductor's authoritative voice
         "rate": "+20%",
         "pitch": "+0Hz",
+        "volume": "+0%",
         "random_per_worker": True,
+        "enabled": True,
     },
     "delays": {
         "send_keys_ms": 800,
@@ -508,6 +510,11 @@ async def speak(
 
     config = load_config()
 
+    # Gate: voice.enabled is the canonical on/off switch (cm-y7t). False means
+    # no generation, no playback — mirrors state-tracker's CLAUDE_AUDIO guard.
+    if not config["voice"].get("enabled", True):
+        return "audio disabled (voice.enabled=false in config)"
+
     # Determine voice
     if voice is None:
         if worker_id:
@@ -519,8 +526,14 @@ async def speak(
     if rate is None:
         rate = config["voice"]["rate"]
 
+    # Pitch + volume come from canonical config (cm-y7t). edge-tts accepts
+    # them as separate flags — cache key includes all four so rate/pitch/volume
+    # changes invalidate properly.
+    pitch = config["voice"].get("pitch", "+0Hz")
+    volume = config["voice"].get("volume", "+0%")
+
     # Generate cache key
-    cache_key = hashlib.md5(f"{voice}:{rate}:{text}".encode()).hexdigest()
+    cache_key = hashlib.md5(f"{voice}:{rate}:{pitch}:{volume}:{text}".encode()).hexdigest()
     cache_file = AUDIO_CACHE_DIR / f"{cache_key}.mp3"
 
     # Generate audio if not cached
@@ -529,6 +542,7 @@ async def speak(
             # Use edge-tts CLI
             subprocess.run(
                 ["edge-tts", "--voice", voice, "--rate", rate,
+                 "--pitch", pitch, "--volume", volume,
                  "--text", text, "--write-media", str(cache_file)],
                 check=True,
                 capture_output=True

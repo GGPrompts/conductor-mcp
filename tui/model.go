@@ -779,19 +779,21 @@ func (m *model) updateSettingsContent() {
 		current := settingsGetVoice()
 		rate := settingsGetVoiceRate()
 		pitch := settingsGetVoicePitch()
+		volume := settingsGetVoiceVolume()
+		enabled := settingsGetVoiceEnabled()
 		randomPerWorker := settingsGetRandomPerWorker()
 		assignmentCount := settingsCountVoiceAssignments()
 
-		// Row index math — MUST stay in sync with voicePreambleLines in
-		// update_keyboard.go. Cursor maps to rows:
-		//   0            -> rate editor
-		//   1            -> pitch editor
-		//   2            -> random toggle
-		//   3..2+N       -> voice pool (N = len(voicePool))
-		//   3+N          -> reset-assignments action
-		rateCursor := 0
-		pitchCursor := 1
-		randomCursor := 2
+		// Row index math — MUST stay in sync with voicePreambleLines and
+		// voiceCursorEnabled/Rate/Pitch/Volume/Random in update_keyboard.go.
+		// Cursor maps to rows:
+		//   0            -> enabled toggle
+		//   1            -> rate editor
+		//   2            -> pitch editor
+		//   3            -> volume editor
+		//   4            -> random toggle
+		//   5..4+N       -> voice pool (N = len(voicePool))
+		//   5+N          -> reset-assignments action
 		// Use the shared voicePoolStart const (update_keyboard.go) so all
 		// four call sites — this renderer, voiceCursorLine, the Enter
 		// handler, and the "t" test-only handler — stay in lockstep.
@@ -802,29 +804,49 @@ func (m *model) updateSettingsContent() {
 		lines = append(lines, "")
 		lines = append(lines, "DETAILS:header:Voice settings  (←/→ adjusts, space toggles)")
 
-		// Rate row (cursor 0)
-		rateLine := fmt.Sprintf("%sRate:             %s", cursorMarker(m.settingsCursor == rateCursor), rate)
-		if m.settingsCursor == rateCursor {
+		// Enabled toggle row (cursor 0)
+		enabledVal := "off"
+		if enabled {
+			enabledVal = "on"
+		}
+		enabledLine := fmt.Sprintf("%sAudio enabled:    [%s]", cursorMarker(m.settingsCursor == voiceCursorEnabled), enabledVal)
+		if m.settingsCursor == voiceCursorEnabled {
+			lines = append(lines, "SELECTED:"+enabledLine)
+		} else {
+			lines = append(lines, enabledLine)
+		}
+
+		// Rate row (cursor 1)
+		rateLine := fmt.Sprintf("%sRate:             %s", cursorMarker(m.settingsCursor == voiceCursorRate), rate)
+		if m.settingsCursor == voiceCursorRate {
 			lines = append(lines, "SELECTED:"+rateLine)
 		} else {
 			lines = append(lines, rateLine)
 		}
 
-		// Pitch row (cursor 1)
-		pitchLine := fmt.Sprintf("%sPitch:            %s", cursorMarker(m.settingsCursor == pitchCursor), pitch)
-		if m.settingsCursor == pitchCursor {
+		// Pitch row (cursor 2)
+		pitchLine := fmt.Sprintf("%sPitch:            %s", cursorMarker(m.settingsCursor == voiceCursorPitch), pitch)
+		if m.settingsCursor == voiceCursorPitch {
 			lines = append(lines, "SELECTED:"+pitchLine)
 		} else {
 			lines = append(lines, pitchLine)
 		}
 
-		// Random-per-worker toggle row (cursor 2)
+		// Volume row (cursor 3)
+		volumeLine := fmt.Sprintf("%sVolume:           %s", cursorMarker(m.settingsCursor == voiceCursorVolume), volume)
+		if m.settingsCursor == voiceCursorVolume {
+			lines = append(lines, "SELECTED:"+volumeLine)
+		} else {
+			lines = append(lines, volumeLine)
+		}
+
+		// Random-per-worker toggle row (cursor 4)
 		toggleVal := "off"
 		if randomPerWorker {
 			toggleVal = "on"
 		}
-		randomLine := fmt.Sprintf("%sRandom per worker: [%s]", cursorMarker(m.settingsCursor == randomCursor), toggleVal)
-		if m.settingsCursor == randomCursor {
+		randomLine := fmt.Sprintf("%sRandom per worker: [%s]", cursorMarker(m.settingsCursor == voiceCursorRandom), toggleVal)
+		if m.settingsCursor == voiceCursorRandom {
 			lines = append(lines, "SELECTED:"+randomLine)
 		} else {
 			lines = append(lines, randomLine)

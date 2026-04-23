@@ -9,10 +9,15 @@ import (
 // the Voice section, voiceCursorLine(cursor) points at the rendered SELECTED:
 // row in updateSettingsContent. Guards the invariant cm-cjk cares about: if
 // the two helpers drift apart the cursor scrolls off-screen.
+//
+// Extended in cm-y7t: now covers 5 fixed rows (enabled, rate, pitch, volume,
+// random) + voice pool + reset, for voicePoolStart + len(voicePool) + 1
+// cursor positions.
 func TestVoiceCursorLineMatchesContent(t *testing.T) {
 	total := voiceSectionCursorCount()
-	if total != 3+len(voicePool)+1 {
-		t.Fatalf("voiceSectionCursorCount = %d, expected %d", total, 3+len(voicePool)+1)
+	expected := voicePoolStart + len(voicePool) + 1
+	if total != expected {
+		t.Fatalf("voiceSectionCursorCount = %d, expected %d", total, expected)
 	}
 
 	for cursor := 0; cursor < total; cursor++ {
@@ -29,6 +34,29 @@ func TestVoiceCursorLineMatchesContent(t *testing.T) {
 		got := m.settingsContent[line]
 		if !strings.HasPrefix(got, "SELECTED:") {
 			t.Errorf("cursor=%d: content[%d] = %q, expected SELECTED: prefix", cursor, line, got)
+		}
+	}
+}
+
+// TestAdjustVoiceVolume checks the ±5%% stepper math for volume, including
+// clamping to [-100, +100] (cm-y7t).
+func TestAdjustVoiceVolume(t *testing.T) {
+	cases := []struct {
+		in    string
+		delta int
+		want  string
+	}{
+		{"+0%", 5, "+5%"},
+		{"+0%", -5, "-5%"},
+		{"-100%", -5, "-100%"}, // clamp
+		{"+100%", 5, "+100%"},  // clamp
+		{"-20%", 5, "-15%"},
+		{"+20%", -5, "+15%"},
+	}
+	for _, c := range cases {
+		got := adjustVoiceVolumePercent(c.in, c.delta)
+		if got != c.want {
+			t.Errorf("adjustVoiceVolumePercent(%q,%d) = %q, want %q", c.in, c.delta, got, c.want)
 		}
 	}
 }

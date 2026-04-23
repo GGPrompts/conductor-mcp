@@ -206,6 +206,12 @@ python server.py
 claude mcp add conductor -- python /path/to/server.py
 ```
 
+## Audio / Voice configuration
+
+Canonical config (`~/.config/conductor/config.json`) is the single source of truth for voice/audio settings. Legacy `CLAUDE_*` env vars (`CLAUDE_VOICE`, `CLAUDE_RATE`, `CLAUDE_PITCH`, `CLAUDE_VOLUME`, `CLAUDE_AUDIO`) are fallback only — used per-key when the canonical config is missing that key.
+
+`voice.enabled` gates all audio paths. When false, both the MCP `speak` tool and the state-tracker chimes short-circuit without generating or playing any sound.
+
 ## Reference
 
 Legacy implementations in `reference/`:

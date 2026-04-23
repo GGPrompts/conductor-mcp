@@ -9,6 +9,7 @@ MCP server providing orchestration tools for Claude Code workers.
 - **Audio player** - mpv, ffplay, or vlc for TTS playback
 - **bd** (optional) - Beads CLI for issue tracking (`go install` from gastownhall/beads)
 - **git** - For worktree management
+- **jq** - JSON reader for hook scripts (reads audio section from `~/.config/conductor/config.json`)
 
 ## Tools (41 total)
 

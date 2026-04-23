@@ -43,13 +43,26 @@ import pytest
 # design) and so won't appear here.
 SHARED_SURFACE: list[str] = [
     "speak",
+    "send_keys",
+    "kill_worker",
+    "kill_pane",
+    "focus_pane",
+    "show_popup",
+    "show_status_popup",
 ]
 
 # MCP name -> CLI path (space-separated). Missing entries mean the CLI
 # path is identical to the MCP name (flat). Example once migrations land:
 #   "list_hooks": "hook list",
 #   "set_pane_hook": "hook set",
-CLI_PATH_MAP: dict[str, str] = {}
+CLI_PATH_MAP: dict[str, str] = {
+    "send_keys": "send",
+    "kill_worker": "kill worker",
+    "kill_pane": "kill pane",
+    "focus_pane": "focus",
+    "show_popup": "popup show",
+    "show_status_popup": "popup status",
+}
 
 
 # ─── Helpers ────────────────────────────────────────────────────

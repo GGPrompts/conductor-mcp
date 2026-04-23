@@ -684,3 +684,264 @@ def speak_impl(
                 pass
 
     return f"Speaking: {text[:50]}{'...' if len(text) > 50 else ''}"
+
+
+# ═══════════════════════════════════════════════════════════════
+# Send keys (tmux) — shared by MCP send_keys tool and `cm send` CLI verb
+# ═══════════════════════════════════════════════════════════════
+
+def send_keys_impl(
+    session: str,
+    keys: str,
+    submit: bool = True,
+    delay_ms: int = DEFAULT_DELAY_MS,
+) -> str:
+    """
+    Send keys to a tmux session. If submit=True, waits delay_ms then presses Enter.
+
+    Synchronous helper shared by the MCP `send_keys` tool and the `cm send`
+    CLI verb. The delay between text and Enter is critical for Claude/Codex —
+    without it, they create a newline instead of submitting.
+
+    Args:
+        session: tmux session name or pane id.
+        keys: Text/keys to send (literal, no tmux interpretation).
+        submit: If True, wait delay_ms then press Enter (default: True).
+        delay_ms: Milliseconds to wait before Enter (default: DEFAULT_DELAY_MS,
+            ignored when submit=False).
+
+    Returns:
+        Short confirmation string matching the previous MCP return shape.
+    """
+    subprocess.run(
+        ["tmux", "send-keys", "-t", session, "-l", keys],
+        check=True,
+    )
+
+    if submit:
+        time.sleep(delay_ms / 1000)
+        subprocess.run(
+            ["tmux", "send-keys", "-t", session, "Enter"],
+            check=True,
+        )
+        return f"Sent keys to {session} ({len(keys)} chars, submitted after {delay_ms}ms)"
+
+    return f"Sent keys to {session} ({len(keys)} chars, no submit)"
+
+
+# ═══════════════════════════════════════════════════════════════
+# Kill worker / pane — shared by MCP tools and `cm kill` CLI verbs
+# ═══════════════════════════════════════════════════════════════
+
+def kill_worker_impl(
+    session: str,
+    cleanup_worktree: bool = False,
+    project_dir: Optional[str] = None,
+) -> str:
+    """
+    Kill a worker's tmux session; optionally remove its git worktree.
+
+    Shared by MCP `kill_worker` tool and `cm kill worker` CLI verb. Returns
+    the same semicolon-joined status string the MCP tool returned.
+    """
+    messages: list[str] = []
+
+    result = subprocess.run(
+        ["tmux", "kill-session", "-t", session],
+        capture_output=True, text=True,
+    )
+
+    if result.returncode == 0:
+        messages.append(f"Killed session: {session}")
+    else:
+        messages.append(f"Session {session} not found or already killed")
+
+    # Clean up state file
+    state_file = STATE_DIR / f"{session}.json"
+    if state_file.exists():
+        state_file.unlink()
+        messages.append("Removed state file")
+
+    # Release voice assignment
+    release_worker_voice(session)
+
+    # Clean up worktree if requested
+    if cleanup_worktree:
+        if not project_dir:
+            messages.append("Warning: project_dir required for worktree cleanup")
+        else:
+            from pathlib import Path as _Path
+            project_path = _Path(project_dir).expanduser().resolve()
+            worktree_path = project_path / ".worktrees" / session
+
+            if worktree_path.exists():
+                result = subprocess.run(
+                    ["git", "-C", str(project_path), "worktree", "remove",
+                     str(worktree_path), "--force"],
+                    capture_output=True, text=True,
+                )
+                if result.returncode == 0:
+                    messages.append(f"Removed worktree: {worktree_path}")
+                else:
+                    messages.append(f"Failed to remove worktree: {result.stderr.strip()}")
+            else:
+                messages.append(f"Worktree not found: {worktree_path}")
+
+    return "; ".join(messages)
+
+
+def kill_pane_impl(pane_id: str) -> str:
+    """
+    Kill a specific tmux pane. Shared by MCP `kill_pane` and `cm kill pane`.
+
+    Returns the same short confirmation string the MCP tool returned; an
+    error message (prefixed "Failed to kill pane:") on failure.
+    """
+    result = subprocess.run(
+        ["tmux", "kill-pane", "-t", pane_id],
+        capture_output=True, text=True,
+    )
+
+    if result.returncode != 0:
+        return f"Failed to kill pane: {result.stderr.strip()}"
+
+    return f"Killed pane: {pane_id}"
+
+
+# ═══════════════════════════════════════════════════════════════
+# Focus pane — shared by MCP focus_pane and `cm focus` CLI verb
+# ═══════════════════════════════════════════════════════════════
+
+def focus_pane_impl(pane_id: str) -> str:
+    """
+    Switch tmux focus to a specific pane. Shared by MCP and `cm focus`.
+
+    Returns a short confirmation string; error message (prefixed
+    "Failed to focus pane:") on failure.
+    """
+    result = subprocess.run(
+        ["tmux", "select-pane", "-t", pane_id],
+        capture_output=True, text=True,
+    )
+
+    if result.returncode != 0:
+        return f"Failed to focus pane: {result.stderr.strip()}"
+
+    return f"Focused pane: {pane_id}"
+
+
+# ═══════════════════════════════════════════════════════════════
+# Popups — shared by MCP show_popup / show_status_popup and `cm popup ...`
+# ═══════════════════════════════════════════════════════════════
+
+def show_popup_impl(
+    message: str,
+    title: str = "Conductor",
+    width: int = 50,
+    height: int = 10,
+    duration_s: int = 3,
+    target: Optional[str] = None,
+) -> str:
+    """
+    Show a floating tmux popup with `message`. Non-blocking (spawns Popen).
+
+    Shared by MCP `show_popup` and `cm popup show`. Returns the same short
+    confirmation string the MCP tool returned.
+    """
+    # Build the command to run inside popup
+    escaped_msg = message.replace("'", "'\\''")
+    popup_cmd = f"printf '%s\\n' '{escaped_msg}'; sleep {duration_s}"
+
+    args = ["tmux", "display-popup"]
+
+    if target:
+        args.extend(["-t", target])
+
+    args.extend([
+        "-T", title,
+        "-w", str(width),
+        "-h", str(height),
+        "-E", popup_cmd,
+    ])
+
+    # Run in background so it doesn't block
+    subprocess.Popen(
+        args,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    return f"Popup shown: {message[:30]}{'...' if len(message) > 30 else ''}"
+
+
+def _list_workers_core() -> list[dict]:
+    """Return tmux sessions as worker dicts. Pure helper used by status popup."""
+    result = subprocess.run(
+        ["tmux", "list-sessions", "-F",
+         "#{session_name}|#{session_created}|#{session_windows}|#{session_attached}"],
+        capture_output=True, text=True,
+    )
+
+    if result.returncode != 0:
+        return []
+
+    workers: list[dict] = []
+    for line in result.stdout.strip().split("\n"):
+        if not line:
+            continue
+        parts = line.split("|")
+        if len(parts) >= 4:
+            name = parts[0]
+            status = None
+            state_file = STATE_DIR / f"{name}.json"
+            if state_file.exists():
+                try:
+                    with open(state_file) as f:
+                        state = json.load(f)
+                        status = state.get("status")
+                except (json.JSONDecodeError, IOError):
+                    pass
+
+            workers.append({
+                "session": name,
+                "created": parts[1],
+                "windows": int(parts[2]),
+                "attached": parts[3] == "1",
+                "claude_status": status,
+            })
+
+    return workers
+
+
+def show_status_popup_impl(
+    workers: Optional[list] = None,
+    target: Optional[str] = None,
+) -> str:
+    """
+    Show a popup with current worker status summary. Fetches fresh worker
+    list when `workers` is None. Shared by MCP `show_status_popup` and
+    `cm popup status`.
+    """
+    if workers is None:
+        workers = _list_workers_core()
+
+    if not workers:
+        message = "No active workers"
+    else:
+        lines = ["WORKER STATUS", "=" * 30]
+        for w in workers:
+            status = w.get("claude_status") or "unknown"
+            attached = "•" if w.get("attached") else " "
+            lines.append(f"{attached} {w['session']}: {status}")
+        lines.append("=" * 30)
+        lines.append(f"Total: {len(workers)} workers")
+        message = "\n".join(lines)
+
+    return show_popup_impl(
+        message=message,
+        title="Worker Status",
+        width=40,
+        height=min(len(workers) + 6, 20),
+        duration_s=5,
+        target=target,
+    )

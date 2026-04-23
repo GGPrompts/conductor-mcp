@@ -26,11 +26,16 @@ from conductor.core import (
     _find_best_split,
     _get_context_from_state_files,
     _get_context_from_terminal,
+    focus_pane_impl,
     get_worker_voice,
+    kill_pane_impl,
+    kill_worker_impl,
     list_panes_core,
     load_config,
-    release_worker_voice,
     resolve_profile,
+    send_keys_impl,
+    show_popup_impl,
+    show_status_popup_impl,
     speak_impl,
 )
 from conductor.protocol import (
@@ -68,24 +73,7 @@ async def send_keys(
     Returns:
         Confirmation message
     """
-    # Send the keys (literal mode to avoid tmux interpretation)
-    subprocess.run(
-        ["tmux", "send-keys", "-t", session, "-l", keys],
-        check=True
-    )
-
-    if submit:
-        # Wait for input detection
-        await asyncio.sleep(delay_ms / 1000)
-
-        # Press Enter to submit
-        subprocess.run(
-            ["tmux", "send-keys", "-t", session, "Enter"],
-            check=True
-        )
-        return f"Sent keys to {session} ({len(keys)} chars, submitted after {delay_ms}ms)"
-
-    return f"Sent keys to {session} ({len(keys)} chars, no submit)"
+    return send_keys_impl(session, keys, submit=submit, delay_ms=delay_ms)
 
 
 @mcp.tool()
@@ -240,49 +228,7 @@ def kill_worker(
     Returns:
         Confirmation message
     """
-    # Kill tmux session
-    result = subprocess.run(
-        ["tmux", "kill-session", "-t", session],
-        capture_output=True, text=True
-    )
-
-    messages = []
-    if result.returncode == 0:
-        messages.append(f"Killed session: {session}")
-    else:
-        messages.append(f"Session {session} not found or already killed")
-
-    # Clean up state file
-    state_file = STATE_DIR / f"{session}.json"
-    if state_file.exists():
-        state_file.unlink()
-        messages.append("Removed state file")
-
-    # Release voice assignment
-    release_worker_voice(session)
-
-    # Clean up worktree if requested
-    if cleanup_worktree:
-        if not project_dir:
-            messages.append("Warning: project_dir required for worktree cleanup")
-        else:
-            project_path = Path(project_dir).expanduser().resolve()
-            worktree_path = project_path / ".worktrees" / session
-
-            if worktree_path.exists():
-                result = subprocess.run(
-                    ["git", "-C", str(project_path), "worktree", "remove",
-                     str(worktree_path), "--force"],
-                    capture_output=True, text=True
-                )
-                if result.returncode == 0:
-                    messages.append(f"Removed worktree: {worktree_path}")
-                else:
-                    messages.append(f"Failed to remove worktree: {result.stderr.strip()}")
-            else:
-                messages.append(f"Worktree not found: {worktree_path}")
-
-    return "; ".join(messages)
+    return kill_worker_impl(session, cleanup_worktree=cleanup_worktree, project_dir=project_dir)
 
 
 @mcp.tool()
@@ -856,15 +802,7 @@ def focus_pane(pane_id: str) -> str:
     Returns:
         Confirmation message
     """
-    result = subprocess.run(
-        ["tmux", "select-pane", "-t", pane_id],
-        capture_output=True, text=True
-    )
-
-    if result.returncode != 0:
-        return f"Failed to focus pane: {result.stderr.strip()}"
-
-    return f"Focused pane: {pane_id}"
+    return focus_pane_impl(pane_id)
 
 
 @mcp.tool()
@@ -878,15 +816,7 @@ def kill_pane(pane_id: str) -> str:
     Returns:
         Confirmation message
     """
-    result = subprocess.run(
-        ["tmux", "kill-pane", "-t", pane_id],
-        capture_output=True, text=True
-    )
-
-    if result.returncode != 0:
-        return f"Failed to kill pane: {result.stderr.strip()}"
-
-    return f"Killed pane: {pane_id}"
+    return kill_pane_impl(pane_id)
 
 
 @mcp.tool()
@@ -1383,31 +1313,14 @@ def show_popup(
     Returns:
         Confirmation message
     """
-    # Build the command to run inside popup
-    # Using printf for better escaping, then sleep for duration
-    escaped_msg = message.replace("'", "'\\''")
-    popup_cmd = f"printf '%s\\n' '{escaped_msg}'; sleep {duration_s}"
-
-    args = ["tmux", "display-popup"]
-
-    if target:
-        args.extend(["-t", target])
-
-    args.extend([
-        "-T", title,
-        "-w", str(width),
-        "-h", str(height),
-        "-E", popup_cmd
-    ])
-
-    # Run in background so it doesn't block
-    subprocess.Popen(
-        args,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+    return show_popup_impl(
+        message=message,
+        title=title,
+        width=width,
+        height=height,
+        duration_s=duration_s,
+        target=target,
     )
-
-    return f"Popup shown: {message[:30]}{'...' if len(message) > 30 else ''}"
 
 
 @mcp.tool()
@@ -1425,29 +1338,7 @@ def show_status_popup(
     Returns:
         Confirmation message
     """
-    if workers is None:
-        workers = list_workers()
-
-    if not workers:
-        message = "No active workers"
-    else:
-        lines = ["WORKER STATUS", "=" * 30]
-        for w in workers:
-            status = w.get("claude_status") or "unknown"
-            attached = "•" if w.get("attached") else " "
-            lines.append(f"{attached} {w['session']}: {status}")
-        lines.append("=" * 30)
-        lines.append(f"Total: {len(workers)} workers")
-        message = "\n".join(lines)
-
-    return show_popup(
-        message=message,
-        title="Worker Status",
-        width=40,
-        height=min(len(workers) + 6, 20),
-        duration_s=5,
-        target=target
-    )
+    return show_status_popup_impl(workers=workers, target=target)
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -53,6 +53,10 @@ def main() -> None:
 # Each import registers a verb on `cli` as a side-effect. Keep this list
 # alphabetised; add a new line for every new verb module. Noqa on each
 # import because the module-level decorator is the whole point.
+from conductor.cli import focus as _focus  # noqa: F401  (registers focus)
+from conductor.cli import kill as _kill  # noqa: F401  (registers kill group)
+from conductor.cli import popup as _popup  # noqa: F401  (registers popup group)
+from conductor.cli import send as _send  # noqa: F401  (registers send)
 from conductor.cli import speak as _speak  # noqa: F401  (registers speak)
 
 

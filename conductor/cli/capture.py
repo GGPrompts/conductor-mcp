@@ -29,6 +29,7 @@ _CAPTURE_ERROR_PREFIX = "Failed to capture:"
 
 @cli.command(
     "capture",
+    short_help="Tail recent lines from a session's pane.",
     help=(
         "Capture the last --lines lines from SESSION's tmux pane. "
         "Default tail is 50 lines. Emits the raw pane text on stdout; "

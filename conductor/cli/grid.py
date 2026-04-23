@@ -17,6 +17,7 @@ from conductor.cli._output import die, emit_json, emit_tsv
 
 @cli.command(
     "grid",
+    short_help="Create a COLSxROWS grid of panes.",
     help=(
         "Create a COLSxROWS grid of panes (e.g. 2x2, 3x1, 4x1). Starts "
         "from the current pane and splits to fill the layout. Default "

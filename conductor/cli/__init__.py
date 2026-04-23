@@ -37,6 +37,19 @@ import click
         "(spawn, pane ops, watch, hooks). The MCP server (conductor-mcp) "
         "and this CLI share all logic via conductor.core."
     ),
+    epilog=(
+        "Examples:\n"
+        "\n"
+        "\b\n"
+        "  cm list workers                 # active tmux sessions (TSV)\n"
+        "  cm send my-sess 'hello'         # type 'hello' + Enter\n"
+        "  cm capture my-sess --lines 20   # tail pane output\n"
+        "  cm grid 2x2                     # split current pane into a grid\n"
+        "  cm config get --json            # dump full config\n"
+        "\n"
+        "Every verb supports --json for single-line structured output; "
+        "default is terse TSV (no header). Run `cm <verb> --help` for details."
+    ),
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 @click.version_option(package_name="conductor-mcp", prog_name="cm")

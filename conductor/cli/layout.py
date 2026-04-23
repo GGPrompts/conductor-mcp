@@ -35,6 +35,7 @@ def layout_group() -> None:
 
 @layout_group.command(
     "apply",
+    short_help="Apply a named tmux layout.",
     help=(
         "Apply a named tmux layout to the current window. NAME is one of: "
         "tiled, even-horizontal, even-vertical, main-horizontal, main-vertical."
@@ -83,6 +84,7 @@ def layout_apply_cmd(name: str, target: str | None, as_json: bool) -> None:
 
 @layout_group.command(
     "rebalance",
+    short_help="Rebalance panes to equal sizes.",
     help=(
         "Rebalance the current window's panes to equal sizes (tiled). "
         "Useful after killing a pane."

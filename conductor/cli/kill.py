@@ -38,6 +38,7 @@ def kill_group() -> None:
 
 @kill_group.command(
     "worker",
+    short_help="Kill a worker session (and its worktree).",
     help=(
         "Kill the tmux session SESSION and remove any state file. "
         "Pass --cleanup-worktree (with --project-dir) to also remove "
@@ -95,6 +96,7 @@ def kill_worker_cmd(
 
 @kill_group.command(
     "pane",
+    short_help="Kill a tmux pane by id.",
     help="Kill tmux pane PANE_ID (e.g. %0, %5).",
     context_settings={"help_option_names": ["-h", "--help"]},
 )

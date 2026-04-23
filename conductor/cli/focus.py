@@ -18,6 +18,7 @@ _ERROR_PREFIX = "Failed to focus pane:"
 
 @cli.command(
     "focus",
+    short_help="Focus a tmux pane by id.",
     help="Switch tmux focus to PANE_ID (e.g. %0, %5).",
     context_settings={"help_option_names": ["-h", "--help"]},
 )

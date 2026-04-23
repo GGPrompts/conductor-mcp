@@ -60,6 +60,7 @@ def worker_group() -> None:
 
 @worker_group.command(
     "status",
+    short_help="Read a worker's Claude state file.",
     help=(
         "Read Claude's state file for SESSION. Exits non-zero with a "
         "message on stderr when no state file exists. Default TSV emits "
@@ -113,6 +114,7 @@ def worker_status_cmd(session: str, as_json: bool) -> None:
 
 @worker_group.command(
     "capacity",
+    short_help="List workers with remaining context capacity.",
     help=(
         "List workers and their remaining context capacity. Default TSV "
         "columns: session<TAB>context_percent<TAB>claude_status<TAB>"
@@ -126,7 +128,7 @@ def worker_status_cmd(session: str, as_json: bool) -> None:
     type=int,
     default=60,
     show_default=True,
-    help="Context %% below which a worker is considered to have capacity.",
+    help="Context % below which a worker is considered to have capacity.",
 )
 @click.option(
     "--json",

@@ -18,6 +18,7 @@ from conductor.core import DEFAULT_DELAY_MS, send_keys_impl
 
 @cli.command(
     "send",
+    short_help="Send text to a tmux session.",
     help=(
         "Send TEXT to SESSION via tmux send-keys. Submits with Enter by "
         "default after --delay-ms milliseconds. Use --no-submit to type "

@@ -55,6 +55,7 @@ def list_group() -> None:
 
 @list_group.command(
     "workers",
+    short_help="List active worker sessions.",
     help=(
         "List active tmux sessions that look like workers. Default TSV "
         "columns: session<TAB>created<TAB>windows<TAB>attached<TAB>claude_status. "
@@ -86,6 +87,7 @@ def list_workers_cmd(as_json: bool) -> None:
 
 @list_group.command(
     "panes",
+    short_help="List panes in a session.",
     help=(
         "List panes in SESSION (or the current session if omitted). "
         "Default TSV columns: "

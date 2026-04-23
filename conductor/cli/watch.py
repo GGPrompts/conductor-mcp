@@ -36,6 +36,7 @@ _READ_ERROR_PREFIXES = (
 
 @cli.group(
     "watch",
+    short_help="Stream a pane's output to a file.",
     help=(
         "Stream tmux pane output to a file for real-time monitoring. "
         "Sub-commands: start (begin piping), stop (tear down the pipe), "
@@ -49,6 +50,7 @@ def watch_group() -> None:
 
 @watch_group.command(
     "start",
+    short_help="Begin streaming a pane to a log file.",
     help=(
         "Start streaming PANE_ID's output via tmux pipe-pane. Default "
         "output file is /tmp/conductor-watch/pane-<id>.log; override "
@@ -96,6 +98,7 @@ def watch_start_cmd(pane_id: str, output_file: str | None, as_json: bool) -> Non
 
 @watch_group.command(
     "stop",
+    short_help="Stop streaming a pane.",
     help="Stop streaming PANE_ID's output (closes the tmux pipe-pane).",
     context_settings={"help_option_names": ["-h", "--help"]},
 )
@@ -134,6 +137,7 @@ def watch_stop_cmd(pane_id: str, as_json: bool) -> None:
 
 @watch_group.command(
     "read",
+    short_help="Tail a pane's watch log.",
     help=(
         "Read the last --lines lines from PANE_ID's watch log. Default "
         "tail is 50 lines; --output-file overrides the auto-detected path."

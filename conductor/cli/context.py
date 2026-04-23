@@ -28,8 +28,9 @@ _CONTEXT_FIELDS = ["target", "context_percent", "source", "status"]
 
 @cli.command(
     "context",
+    short_help="Read Claude's context % for a target.",
     help=(
-        "Print the context usage %% for TARGET (tmux session name or "
+        "Print the context usage % for TARGET (tmux session name or "
         "pane id). Prefers the state-file source; falls back to scraping "
         "the visible terminal status line. Default TSV columns: "
         "target<TAB>context_percent<TAB>source<TAB>status. "

@@ -223,14 +223,17 @@ Without the delay, Claude creates a newline instead of submitting.
 ## Development
 
 ```bash
-# Install in dev mode
-pip install -e ".[dev]"
+# Install globally (editable) — puts `cm` and `conductor-mcp` on PATH
+uv tool install --editable .
 
-# Run server directly
-python server.py
+# Dev dependencies inside the project venv
+uv sync --all-extras
 
-# Test with Claude Code
-claude mcp add conductor -- python /path/to/server.py
+# Run the MCP server directly
+uv run conductor-mcp              # or: uv run python -m conductor.server
+
+# Register with Claude Code
+claude mcp add conductor -- conductor-mcp
 ```
 
 ## Audio / Voice configuration

@@ -20,6 +20,7 @@ _ERROR_PREFIX = "Failed to toggle zoom:"
 
 @cli.command(
     "zoom",
+    short_help="Toggle fullscreen zoom on a pane.",
     help="Toggle fullscreen zoom on tmux pane PANE_ID (call again to unzoom).",
     context_settings={"help_option_names": ["-h", "--help"]},
 )

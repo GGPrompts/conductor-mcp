@@ -33,6 +33,7 @@ def spawn_group() -> None:
 
 @spawn_group.command(
     "in-pane",
+    short_help="Launch a worker in an existing pane.",
     help=(
         "Launch a worker in existing PANE_ID for beads ISSUE_ID. Creates "
         "a git worktree under <cwd>/.worktrees/ISSUE_ID if missing and "

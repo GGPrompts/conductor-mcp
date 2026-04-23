@@ -779,27 +779,82 @@ func (m *model) updateSettingsContent() {
 		current := settingsGetVoice()
 		rate := settingsGetVoiceRate()
 		pitch := settingsGetVoicePitch()
+		randomPerWorker := settingsGetRandomPerWorker()
+		assignmentCount := settingsCountVoiceAssignments()
+
+		// Row index math — MUST stay in sync with voicePreambleLines in
+		// update_keyboard.go. Cursor maps to rows:
+		//   0            -> rate editor
+		//   1            -> pitch editor
+		//   2            -> random toggle
+		//   3..2+N       -> voice pool (N = len(voicePool))
+		//   3+N          -> reset-assignments action
+		rateCursor := 0
+		pitchCursor := 1
+		randomCursor := 2
+		poolStart := 3
+		resetCursor := poolStart + len(voicePool)
 
 		lines = append(lines, "DETAILS:header:Default voice")
-		lines = append(lines, "DETAILS:detail:current: "+current+"   rate: "+rate+"   pitch: "+pitch)
+		lines = append(lines, "DETAILS:detail:current: "+current)
 		lines = append(lines, "")
-		lines = append(lines, "DETAILS:header:Pick a voice (Enter = save + preview, t = test only)")
+		lines = append(lines, "DETAILS:header:Voice settings  (←/→ adjusts, space toggles)")
+
+		// Rate row (cursor 0)
+		rateLine := fmt.Sprintf("%sRate:             %s", cursorMarker(m.settingsCursor == rateCursor), rate)
+		if m.settingsCursor == rateCursor {
+			lines = append(lines, "SELECTED:"+rateLine)
+		} else {
+			lines = append(lines, rateLine)
+		}
+
+		// Pitch row (cursor 1)
+		pitchLine := fmt.Sprintf("%sPitch:            %s", cursorMarker(m.settingsCursor == pitchCursor), pitch)
+		if m.settingsCursor == pitchCursor {
+			lines = append(lines, "SELECTED:"+pitchLine)
+		} else {
+			lines = append(lines, pitchLine)
+		}
+
+		// Random-per-worker toggle row (cursor 2)
+		toggleVal := "off"
+		if randomPerWorker {
+			toggleVal = "on"
+		}
+		randomLine := fmt.Sprintf("%sRandom per worker: [%s]", cursorMarker(m.settingsCursor == randomCursor), toggleVal)
+		if m.settingsCursor == randomCursor {
+			lines = append(lines, "SELECTED:"+randomLine)
+		} else {
+			lines = append(lines, randomLine)
+		}
+
+		lines = append(lines, "")
+		lines = append(lines, "DETAILS:header:Pick a voice  (Enter = save + preview, t = test only)")
 
 		for i, v := range voicePool {
-			marker := "  "
-			if i == m.settingsCursor {
-				marker = "► "
-			}
+			cursorIdx := poolStart + i
+			selected := m.settingsCursor == cursorIdx
 			suffix := ""
 			if v == current {
 				suffix = "  (current)"
 			}
-			line := marker + v + suffix
-			if i == m.settingsCursor {
+			line := cursorMarker(selected) + v + suffix
+			if selected {
 				lines = append(lines, "SELECTED:"+line)
 			} else {
 				lines = append(lines, line)
 			}
+		}
+
+		// Reset-assignments action row (cursor resetCursor)
+		lines = append(lines, "")
+		lines = append(lines, "DETAILS:header:Actions")
+		resetLabel := fmt.Sprintf("Reset voice assignments  (%d pinned)", assignmentCount)
+		resetLine := cursorMarker(m.settingsCursor == resetCursor) + resetLabel
+		if m.settingsCursor == resetCursor {
+			lines = append(lines, "SELECTED:"+resetLine)
+		} else {
+			lines = append(lines, resetLine)
 		}
 
 	case settingsSectionProfile:
@@ -847,7 +902,7 @@ func (m *model) updateSettingsContent() {
 
 	lines = append(lines, "")
 	lines = append(lines, "DIVIDER")
-	lines = append(lines, "DETAILS:detail:[Tab] section  [↑↓] nav  [Enter] save + preview  [t] test only")
+	lines = append(lines, "DETAILS:detail:[Tab] section  [↑↓] nav  [←→] ±5  [Space] toggle  [Enter] save/preview/reset  [t] test")
 
 	m.settingsContent = lines
 }

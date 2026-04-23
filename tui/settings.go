@@ -92,6 +92,18 @@ func settingsGetVoicePitch() string {
 	return "+0Hz"
 }
 
+// settingsGetRandomPerWorker returns the current random_per_worker toggle.
+// Defaults to true to match server.py's DEFAULT_CONFIG (cm-06j).
+func settingsGetRandomPerWorker() bool {
+	root := loadCanonicalRoot()
+	if voice, ok := root["voice"].(map[string]interface{}); ok {
+		if b, ok := voice["random_per_worker"].(bool); ok {
+			return b
+		}
+	}
+	return true
+}
+
 // settingsSaveVoice persists the default voice to the canonical config.
 // Writes under "voice" to match the current MCP server schema; a future
 // cm-2k1 iteration may rename to "audio" per cm-d64's final schema.
@@ -107,6 +119,148 @@ func settingsSaveVoice(voice string) error {
 	v["default"] = voice
 	root["voice"] = v
 	return saveCanonicalRoot(root)
+}
+
+// settingsSaveVoiceRate persists voice.rate to the canonical config. The value
+// should be a string in edge-tts' expected "+XX%" / "-XX%" form (cm-06j).
+func settingsSaveVoiceRate(rate string) error {
+	root := loadCanonicalRoot()
+	if root == nil {
+		root = map[string]interface{}{}
+	}
+	v, _ := root["voice"].(map[string]interface{})
+	if v == nil {
+		v = map[string]interface{}{}
+	}
+	v["rate"] = rate
+	root["voice"] = v
+	return saveCanonicalRoot(root)
+}
+
+// settingsSaveVoicePitch persists voice.pitch to the canonical config. The
+// value should be in edge-tts' "+YYHz" / "-YYHz" form (cm-06j).
+func settingsSaveVoicePitch(pitch string) error {
+	root := loadCanonicalRoot()
+	if root == nil {
+		root = map[string]interface{}{}
+	}
+	v, _ := root["voice"].(map[string]interface{})
+	if v == nil {
+		v = map[string]interface{}{}
+	}
+	v["pitch"] = pitch
+	root["voice"] = v
+	return saveCanonicalRoot(root)
+}
+
+// settingsSaveRandomPerWorker persists voice.random_per_worker. Keeps the
+// current key name — do not reintroduce the legacy "random_voices" key
+// (cm-06j, cm-3gw).
+func settingsSaveRandomPerWorker(val bool) error {
+	root := loadCanonicalRoot()
+	if root == nil {
+		root = map[string]interface{}{}
+	}
+	v, _ := root["voice"].(map[string]interface{})
+	if v == nil {
+		v = map[string]interface{}{}
+	}
+	v["random_per_worker"] = val
+	root["voice"] = v
+	return saveCanonicalRoot(root)
+}
+
+// settingsResetVoiceAssignments clears the worker_voice_assignments map and
+// resets voice_pool_index in the canonical config. Mirrors the removed
+// reset_voice_assignments MCP tool (cm-06j / cm-3gw).
+func settingsResetVoiceAssignments() error {
+	root := loadCanonicalRoot()
+	if root == nil {
+		root = map[string]interface{}{}
+	}
+	root["worker_voice_assignments"] = map[string]interface{}{}
+	root["voice_pool_index"] = float64(0)
+	return saveCanonicalRoot(root)
+}
+
+// settingsCountVoiceAssignments returns how many workers have pinned voices,
+// used to render the Reset action row (cm-06j).
+func settingsCountVoiceAssignments() int {
+	root := loadCanonicalRoot()
+	if m, ok := root["worker_voice_assignments"].(map[string]interface{}); ok {
+		return len(m)
+	}
+	return 0
+}
+
+// adjustVoiceRatePercent returns rate + deltaPct, clamped to [-100, +300].
+// Input format matches edge-tts: "+XX%" or "-XX%". Non-numeric input falls
+// back to +0% (cm-06j).
+func adjustVoiceRatePercent(rate string, deltaPct int) string {
+	n := parseSignedNumber(rate, "%")
+	n += deltaPct
+	if n < -100 {
+		n = -100
+	}
+	if n > 300 {
+		n = 300
+	}
+	return formatSigned(n) + "%"
+}
+
+// adjustVoicePitchHz returns pitch + deltaHz, clamped to [-200, +200]. Input
+// format matches edge-tts: "+YYHz" or "-YYHz" (cm-06j).
+func adjustVoicePitchHz(pitch string, deltaHz int) string {
+	n := parseSignedNumber(pitch, "Hz")
+	n += deltaHz
+	if n < -200 {
+		n = -200
+	}
+	if n > 200 {
+		n = 200
+	}
+	return formatSigned(n) + "Hz"
+}
+
+// parseSignedNumber strips an optional sign and a trailing unit suffix, then
+// parses the remaining integer. Returns 0 if parsing fails.
+func parseSignedNumber(s, unit string) int {
+	s = strings.TrimSpace(s)
+	s = strings.TrimSuffix(s, unit)
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	sign := 1
+	switch s[0] {
+	case '+':
+		s = s[1:]
+	case '-':
+		sign = -1
+		s = s[1:]
+	}
+	var n int
+	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
+		return 0
+	}
+	return sign * n
+}
+
+// formatSigned renders an integer with a leading sign so edge-tts accepts it.
+func formatSigned(n int) string {
+	if n >= 0 {
+		return fmt.Sprintf("+%d", n)
+	}
+	return fmt.Sprintf("%d", n)
+}
+
+// cursorMarker returns the 2-char gutter shown in front of a Settings row,
+// "► " when the cursor is on that row and "  " otherwise.
+func cursorMarker(selected bool) string {
+	if selected {
+		return "► "
+	}
+	return "  "
 }
 
 // testVoice shells out to edge-tts + mpv to preview a voice.

@@ -350,21 +350,53 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// voicePreambleLines is the number of content lines rendered before the
-// voicePool list in the Voice section of Settings. It must stay in sync with
-// updateSettingsContent (model.go); breaking this invariant causes the ►
-// cursor to scroll off-screen (cm-cjk).
+// voicePreambleLines is the number of content lines rendered before the first
+// cursor-addressable row in the Voice section of Settings. It must stay in
+// sync with updateSettingsContent (model.go); breaking this invariant causes
+// the ► cursor to scroll off-screen (cm-cjk / cm-06j).
 //
 // Layout (indices in m.settingsContent):
-//   0: tabs row (Voice | Profiles | Timing)
-//   1: DIVIDER
-//   2: blank
-//   3: DETAILS:header:Default voice
-//   4: DETAILS:detail:current/rate/pitch
-//   5: blank
-//   6: DETAILS:header:Pick a voice ...
-//   7+: voicePool entries
+//   0:            tabs row (Voice | Profiles | Timing)
+//   1:            DIVIDER
+//   2:            blank
+//   3:            DETAILS:header:Default voice
+//   4:            DETAILS:detail:current
+//   5:            blank
+//   6:            DETAILS:header:Voice settings
+//   7:            rate row            (cursor 0)
+//   8:            pitch row           (cursor 1)
+//   9:            random toggle row   (cursor 2)
+//   10:           blank
+//   11:           DETAILS:header:Pick a voice
+//   12..11+N:     voice pool entries  (cursors 3..2+N)
+//   12+N:         blank
+//   13+N:         DETAILS:header:Actions
+//   14+N:         reset action row    (cursor 3+N)
 const voicePreambleLines = 7
+
+// voiceSectionCursorCount returns the total number of cursor positions in the
+// Voice section: rate + pitch + random + all voices + reset.
+func voiceSectionCursorCount() int {
+	return 3 + len(voicePool) + 1
+}
+
+// voiceCursorLine returns the content-line index (into m.settingsContent) of
+// a given cursor value. The layout above is not strictly linear — there are
+// blank+header gaps before the voice pool and before the reset action — so
+// this helper handles the offsets.
+func voiceCursorLine(cursor int) int {
+	const gap = 2 // blank + DETAILS:header
+	poolStart := 3
+	resetCursor := poolStart + len(voicePool)
+	switch {
+	case cursor < poolStart:
+		return voicePreambleLines + cursor
+	case cursor < resetCursor:
+		return voicePreambleLines + cursor + gap
+	default:
+		return voicePreambleLines + cursor + 2*gap
+	}
+}
 
 // settingsViewportSize returns the number of content rows visible inside the
 // Settings panel (innerHeight; top-tab panels have no reserved help line).
@@ -403,7 +435,7 @@ func (m *model) adjustSettingsScrollToCursor() {
 		return
 	}
 	viewport := m.settingsViewportSize()
-	cursorLine := voicePreambleLines + m.settingsCursor
+	cursorLine := voiceCursorLine(m.settingsCursor)
 
 	// Scrolled past cursor above viewport: scroll up.
 	if cursorLine < m.sessionsScrollOffset {
@@ -459,7 +491,7 @@ func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 
 	case "down", "j":
 		if m.settingsSection == settingsSectionVoice {
-			if m.settingsCursor < len(voicePool)-1 {
+			if m.settingsCursor < voiceSectionCursorCount()-1 {
 				m.settingsCursor++
 				m.updateSettingsContent()
 				m.adjustSettingsScrollToCursor()
@@ -470,6 +502,79 @@ func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		m.sessionsScrollOffset++
 		m.clampSettingsScrollOffset()
 		return m, nil, true
+
+	case "left", "h":
+		// Left adjusts rate/pitch in the Voice section. On other rows it's a
+		// no-op (swallowed so the outer panel nav doesn't take over).
+		if m.settingsSection == settingsSectionVoice {
+			switch m.settingsCursor {
+			case 0: // rate
+				newRate := adjustVoiceRatePercent(settingsGetVoiceRate(), -5)
+				if err := settingsSaveVoiceRate(newRate); err != nil {
+					m.statusMsg = "Failed to save rate: " + err.Error()
+				} else {
+					m.statusMsg = "Rate: " + newRate
+				}
+				m.updateSettingsContent()
+			case 1: // pitch
+				newPitch := adjustVoicePitchHz(settingsGetVoicePitch(), -5)
+				if err := settingsSaveVoicePitch(newPitch); err != nil {
+					m.statusMsg = "Failed to save pitch: " + err.Error()
+				} else {
+					m.statusMsg = "Pitch: " + newPitch
+				}
+				m.updateSettingsContent()
+			}
+			return m, nil, true
+		}
+		return m, nil, false
+
+	case "right", "l":
+		// Right adjusts rate/pitch in the Voice section. No-op elsewhere.
+		if m.settingsSection == settingsSectionVoice {
+			switch m.settingsCursor {
+			case 0: // rate
+				newRate := adjustVoiceRatePercent(settingsGetVoiceRate(), 5)
+				if err := settingsSaveVoiceRate(newRate); err != nil {
+					m.statusMsg = "Failed to save rate: " + err.Error()
+				} else {
+					m.statusMsg = "Rate: " + newRate
+				}
+				m.updateSettingsContent()
+			case 1: // pitch
+				newPitch := adjustVoicePitchHz(settingsGetVoicePitch(), 5)
+				if err := settingsSaveVoicePitch(newPitch); err != nil {
+					m.statusMsg = "Failed to save pitch: " + err.Error()
+				} else {
+					m.statusMsg = "Pitch: " + newPitch
+				}
+				m.updateSettingsContent()
+			}
+			return m, nil, true
+		}
+		return m, nil, false
+
+	case " ", "space":
+		// Space toggles random-per-worker when cursor is on that row. On
+		// other voice-section rows it's a no-op (swallowed so the outer
+		// toggleSelection doesn't fire).
+		if m.settingsSection == settingsSectionVoice {
+			if m.settingsCursor == 2 {
+				next := !settingsGetRandomPerWorker()
+				if err := settingsSaveRandomPerWorker(next); err != nil {
+					m.statusMsg = "Failed to save random_per_worker: " + err.Error()
+				} else {
+					if next {
+						m.statusMsg = "Random per worker: on"
+					} else {
+						m.statusMsg = "Random per worker: off"
+					}
+				}
+				m.updateSettingsContent()
+			}
+			return m, nil, true
+		}
+		return m, nil, false
 
 	case "pgup":
 		viewport := m.settingsViewportSize()
@@ -492,8 +597,8 @@ func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		m.clampSettingsScrollOffset()
 		if m.settingsSection == settingsSectionVoice {
 			m.settingsCursor += viewport
-			if m.settingsCursor > len(voicePool)-1 {
-				m.settingsCursor = len(voicePool) - 1
+			if m.settingsCursor > voiceSectionCursorCount()-1 {
+				m.settingsCursor = voiceSectionCursorCount() - 1
 			}
 			m.updateSettingsContent()
 			m.adjustSettingsScrollToCursor()
@@ -501,29 +606,56 @@ func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 
 	case "enter":
-		// Save selected voice + preview it
-		if m.settingsSection == settingsSectionVoice && m.settingsCursor >= 0 && m.settingsCursor < len(voicePool) {
-			voice := voicePool[m.settingsCursor]
-			if err := settingsSaveVoice(voice); err != nil {
-				m.statusMsg = "Failed to save voice: " + err.Error()
-			} else {
-				m.statusMsg = "Saved voice: " + voice + " (previewing...)"
+		if m.settingsSection == settingsSectionVoice {
+			poolStart := 3
+			resetCursor := poolStart + len(voicePool)
+			switch {
+			case m.settingsCursor == 0 || m.settingsCursor == 1:
+				// Rate/pitch rows: preview the current default voice with the
+				// new rate/pitch settings. Values are already persisted on
+				// left/right, so Enter is a convenience "hear it now".
+				voice := settingsGetVoice()
+				m.statusMsg = "Preview: " + voice + " (rate " + settingsGetVoiceRate() + ", pitch " + settingsGetVoicePitch() + ")"
 				go func() {
 					_ = testVoice(voice, settingsGetVoiceRate(), "")
 				}()
+			case m.settingsCursor >= poolStart && m.settingsCursor < resetCursor:
+				// Save selected voice + preview it
+				voice := voicePool[m.settingsCursor-poolStart]
+				if err := settingsSaveVoice(voice); err != nil {
+					m.statusMsg = "Failed to save voice: " + err.Error()
+				} else {
+					m.statusMsg = "Saved voice: " + voice + " (previewing...)"
+					go func() {
+						_ = testVoice(voice, settingsGetVoiceRate(), "")
+					}()
+				}
+				m.updateSettingsContent()
+			case m.settingsCursor == resetCursor:
+				// Reset worker_voice_assignments
+				count := settingsCountVoiceAssignments()
+				if err := settingsResetVoiceAssignments(); err != nil {
+					m.statusMsg = "Failed to reset voice assignments: " + err.Error()
+				} else {
+					m.statusMsg = fmt.Sprintf("Cleared %d voice assignments", count)
+				}
+				m.updateSettingsContent()
 			}
-			m.updateSettingsContent()
 		}
 		return m, nil, true
 
 	case "t":
 		// Test the voice under cursor without saving
-		if m.settingsSection == settingsSectionVoice && m.settingsCursor >= 0 && m.settingsCursor < len(voicePool) {
-			voice := voicePool[m.settingsCursor]
-			m.statusMsg = "Testing: " + voice
-			go func() {
-				_ = testVoice(voice, settingsGetVoiceRate(), "")
-			}()
+		if m.settingsSection == settingsSectionVoice {
+			poolStart := 3
+			idx := m.settingsCursor - poolStart
+			if idx >= 0 && idx < len(voicePool) {
+				voice := voicePool[idx]
+				m.statusMsg = "Testing: " + voice
+				go func() {
+					_ = testVoice(voice, settingsGetVoiceRate(), "")
+				}()
+			}
 		}
 		return m, nil, true
 	}

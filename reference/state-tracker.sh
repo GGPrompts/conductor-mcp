@@ -90,6 +90,118 @@ if [[ "$HOOK_TYPE" == "pre-tool" ]] || [[ "$HOOK_TYPE" == "post-tool" ]]; then
     echo "$STDIN_DATA" > "$DEBUG_DIR/${HOOK_TYPE}-$(date +%s%N)-$$.json" 2>/dev/null || true
 fi
 
+# ═══════════════════════════════════════════════════════════════
+# CACHE-HEALTH MONITOR (cm-8k0s)
+# ═══════════════════════════════════════════════════════════════
+# Passive observer: CC's prompt-cache hash can be invalidated every request
+# by changing attestation data, causing 10-20x token burn with no user
+# visibility. We read CC's own JSONL session logs and look for the
+# signature — cache_read=0 sustained with cache_creation still growing —
+# then surface a warning via state file, status line, and gated audio.
+#
+# Scope: only runs on post-tool (once per turn). Silent on missing inputs.
+CACHE_WARNING_FILE="$STATE_DIR/cache-warning.json"
+
+check_cache_health() {
+    # Short-circuit: need jq, and post-tool only.
+    command -v jq >/dev/null 2>&1 || return 0
+
+    # CC names project dirs by replacing '/' with '-' in the abs path.
+    local projects_root="$HOME/.claude/projects"
+    [[ -d "$projects_root" ]] || return 0
+    local dashified="${PWD//\//-}"
+    local proj_dir="$projects_root/$dashified"
+    [[ -d "$proj_dir" ]] || return 0
+
+    # Most recently modified *.jsonl in the project dir (active session).
+    local jsonl
+    jsonl=$(ls -t "$proj_dir"/*.jsonl 2>/dev/null | head -1)
+    [[ -n "$jsonl" && -f "$jsonl" ]] || return 0
+
+    # Extract assistant entries' cache usage as TSV (read<TAB>creation).
+    # Guard against malformed lines with `?` post-filter.
+    local usage_tsv
+    usage_tsv=$(jq -r '
+        select(.type == "assistant")
+        | .message.usage
+        | [ (.cache_read_input_tokens // 0),
+            (.cache_creation_input_tokens // 0) ]
+        | @tsv
+    ' "$jsonl" 2>/dev/null || true)
+    [[ -n "$usage_tsv" ]] || return 0
+
+    local total_assistants
+    total_assistants=$(printf '%s\n' "$usage_tsv" | wc -l)
+
+    # False-positive guard: need at least 8 total assistant entries.
+    [[ "$total_assistants" -ge 8 ]] || return 0
+
+    # Last 5 entries
+    local last5
+    last5=$(printf '%s\n' "$usage_tsv" | tail -n 5)
+    local count_lines
+    count_lines=$(printf '%s\n' "$last5" | wc -l)
+    [[ "$count_lines" -eq 5 ]] || return 0
+
+    # Pull the single last entry (for recovery detection regardless of size).
+    local last_read last_creation
+    last_read=$(printf '%s\n' "$last5" | tail -n 1 | cut -f1)
+    last_creation=$(printf '%s\n' "$last5" | tail -n 1 | cut -f2)
+
+    # Recovery: most recent assistant entry has cache_read>0 → delete warning.
+    if [[ "${last_read:-0}" -gt 0 ]]; then
+        [[ -f "$CACHE_WARNING_FILE" ]] && rm -f "$CACHE_WARNING_FILE" 2>/dev/null || true
+        return 0
+    fi
+
+    # Detection: ALL five cache_read == 0 AND cache_creation > 0 on >= 3.
+    local all_reads_zero=1
+    local creation_growth_count=0
+    local line read_tok creation_tok
+    while IFS=$'\t' read -r read_tok creation_tok; do
+        [[ -n "$read_tok" ]] || continue
+        if [[ "$read_tok" -ne 0 ]]; then
+            all_reads_zero=0
+        fi
+        if [[ "$creation_tok" -gt 0 ]]; then
+            creation_growth_count=$((creation_growth_count + 1))
+        fi
+    done <<< "$last5"
+
+    if [[ "$all_reads_zero" -eq 1 && "$creation_growth_count" -ge 3 ]]; then
+        # Derive a session-id for the marker: prefer the jsonl basename.
+        local cc_session_id
+        cc_session_id=$(basename "$jsonl" .jsonl)
+        local detected_at
+        detected_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        # Write/refresh the warning file. JSON minimal.
+        jq -n \
+            --arg sid "$cc_session_id" \
+            --arg ts "$detected_at" \
+            --argjson read 0 \
+            --argjson creation "$last_creation" \
+            '{session_id:$sid, detected_at:$ts, recent_cache_read:$read, recent_cache_creation:$creation}' \
+            > "$CACHE_WARNING_FILE" 2>/dev/null || true
+
+        # Audio alert (gated + rate-limited per session, 10 min).
+        if audio_is_enabled; then
+            local marker="$STATE_DIR/cache-alert-${cc_session_id}.marker"
+            local should_fire=1
+            if [[ -f "$marker" ]]; then
+                local marker_age now_sec mtime
+                now_sec=$(date +%s)
+                mtime=$(stat -c %Y "$marker" 2>/dev/null || echo 0)
+                marker_age=$((now_sec - mtime))
+                [[ $marker_age -lt 600 ]] && should_fire=0
+            fi
+            if [[ "$should_fire" -eq 1 ]]; then
+                touch "$marker" 2>/dev/null || true
+                "$SCRIPT_DIR/audio-announcer.sh" cache-broken &
+            fi
+        fi
+    fi
+}
+
 case "$HOOK_TYPE" in
     session-start)
         STATUS="idle"
@@ -155,6 +267,9 @@ case "$HOOK_TYPE" in
         CURRENT_TOOL=$(echo "$STDIN_DATA" | jq -r '.tool_name // .tool // .name // "unknown"' 2>/dev/null || echo "unknown")
         TOOL_ARGS_STR=$(echo "$STDIN_DATA" | jq -c '.tool_input // .input // .parameters // {}' 2>/dev/null || echo '{}')
         DETAILS=$(jq -n --arg tool "$CURRENT_TOOL" --arg args "$TOOL_ARGS_STR" '{event:"tool_completed",tool:$tool,args:($args|fromjson)}' 2>/dev/null || echo '{"event":"tool_completed"}')
+        # cm-8k0s: cache-health observer runs once per post-tool. Silent on
+        # any missing inputs; cannot break the hook (1s timeout budget).
+        check_cache_health || true
         ;;
     stop)
         STATUS="awaiting_input"

@@ -212,6 +212,10 @@ Canonical config (`~/.config/conductor/config.json`) is the single source of tru
 
 `voice.enabled` gates all audio paths. When false, both the MCP `speak` tool and the state-tracker chimes short-circuit without generating or playing any sound.
 
+## Cache-health monitor (cm-8k0s)
+
+A passive cache-health check runs from the PostToolUse hook and surfaces CC prompt-cache breakage via the tmux status line and a rate-limited audio alert. Warning state file: `/tmp/claude-code-state/cache-warning.json`.
+
 ## Reference
 
 Legacy implementations in `reference/`:

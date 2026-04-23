@@ -278,6 +278,14 @@ case "$EVENT" in
         play_clip "error" || speak "$SESSION_NAME encountered an error"
         ;;
 
+    cache-broken)
+        # cm-8k0s: cache-health monitor alert. Rate-limiting is enforced
+        # by the caller (state-tracker.sh) via a per-session marker file.
+        acquire_audio_lock "wait" || exit 0
+        play_clip "cache-broken" "sync" || speak "Cache is broken, start a new session" "sync"
+        release_audio_lock
+        ;;
+
     summary)
         # For future: could trigger the brief summary here
         # gemini-media brief --since "5 min" --speak &

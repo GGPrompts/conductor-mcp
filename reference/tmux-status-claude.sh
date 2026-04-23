@@ -9,6 +9,44 @@
 #   3. Reload tmux: tmux source-file ~/.tmux.conf
 
 STATE_DIR="/tmp/claude-code-state"
+CACHE_WARNING_FILE="$STATE_DIR/cache-warning.json"
+
+# cm-8k0s: compute a concise cache-health indicator.
+# If cache-warning.json exists → "Cache: 0% WARN"
+# Else → best-effort "Cache: NN%" from the most recently modified JSONL
+# for the current pane's cwd. Silent fallback to empty string.
+cache_indicator() {
+    if [[ -f "$CACHE_WARNING_FILE" ]]; then
+        printf 'Cache: 0%% WARN'
+        return 0
+    fi
+    command -v jq >/dev/null 2>&1 || return 0
+    local pane_pwd projects_root dashified proj_dir jsonl
+    pane_pwd=$(tmux display-message -p '#{pane_current_path}' 2>/dev/null || echo "$PWD")
+    projects_root="$HOME/.claude/projects"
+    [[ -d "$projects_root" ]] || return 0
+    dashified="${pane_pwd//\//-}"
+    proj_dir="$projects_root/$dashified"
+    [[ -d "$proj_dir" ]] || return 0
+    jsonl=$(ls -t "$proj_dir"/*.jsonl 2>/dev/null | head -1)
+    [[ -n "$jsonl" && -f "$jsonl" ]] || return 0
+    # Sum cache_read / (cache_read + cache_creation) across assistant entries.
+    local totals
+    totals=$(jq -rs '
+        map(select(.type == "assistant") | .message.usage)
+        | { r: (map(.cache_read_input_tokens // 0) | add // 0),
+            c: (map(.cache_creation_input_tokens // 0) | add // 0) }
+        | "\(.r)\t\(.c)"
+    ' "$jsonl" 2>/dev/null || true)
+    local r c denom pct
+    r=$(printf '%s' "$totals" | cut -f1)
+    c=$(printf '%s' "$totals" | cut -f2)
+    [[ -n "$r" && -n "$c" ]] || return 0
+    denom=$((r + c))
+    [[ "$denom" -gt 0 ]] || return 0
+    pct=$(( (r * 100) / denom ))
+    printf 'Cache: %d%%' "$pct"
+}
 
 # Get current tmux session and pane
 # When running from status bar, TMUX_PANE isn't set, so get it from tmux directly
@@ -77,12 +115,13 @@ fi
 # Format output based on status
 # NOTE: Using ASCII instead of emojis to avoid tmux width calculation issues
 # (emojis are 2-cells wide but tmux treats them as 1-cell, causing status bar cutoff)
+OUT=""
 case "$STATUS" in
     idle)
-        echo "[OK] Ready"
+        OUT="[OK] Ready"
         ;;
     processing)
-        echo "[..] Processing"
+        OUT="[..] Processing"
         ;;
     tool_use)
         if [[ -n "$CURRENT_TOOL" ]]; then
@@ -125,26 +164,38 @@ case "$STATUS" in
             if [[ -n "$DETAIL" ]]; then
                 # Truncate detail to 15 chars max
                 DETAIL="${DETAIL:0:15}"
-                echo "[>] ${CURRENT_TOOL:0:10}: ${DETAIL}"
+                OUT="[>] ${CURRENT_TOOL:0:10}: ${DETAIL}"
             else
-                echo "[>] ${CURRENT_TOOL:0:15}"
+                OUT="[>] ${CURRENT_TOOL:0:15}"
             fi
         else
-            echo "[>] Tool"
+            OUT="[>] Tool"
         fi
         ;;
     working)
         if [[ -n "$CURRENT_TOOL" ]]; then
-            echo "[*] ${CURRENT_TOOL}"
+            OUT="[*] ${CURRENT_TOOL}"
         else
-            echo "[*] Working"
+            OUT="[*] Working"
         fi
         ;;
     awaiting_input)
-        echo "[||] Awaiting"
+        OUT="[||] Awaiting"
         ;;
     *)
         # Unknown status, don't show
-        echo ""
+        OUT=""
         ;;
 esac
+
+# cm-8k0s: append cache-health indicator when we have something to show.
+if [[ -n "$OUT" ]]; then
+    CACHE_INFO=$(cache_indicator)
+    if [[ -n "$CACHE_INFO" ]]; then
+        echo "$OUT | $CACHE_INFO"
+    else
+        echo "$OUT"
+    fi
+else
+    echo ""
+fi

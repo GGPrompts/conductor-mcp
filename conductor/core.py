@@ -7,6 +7,7 @@ server and the CLI import from this module.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -527,3 +528,159 @@ def _get_context_from_terminal(target: str) -> dict:
         "status": "not_found",
         "hint": "Status line not visible - Claude may be processing or pane too small",
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# Speak (TTS) — shared by MCP speak tool and `cm speak` CLI verb
+# ═══════════════════════════════════════════════════════════════
+
+def speak_impl(
+    text: str,
+    voice: Optional[str] = None,
+    rate: Optional[str] = None,
+    pitch: Optional[str] = None,
+    volume: Optional[str] = None,
+    worker_id: Optional[str] = None,
+    blocking: bool = False,
+    priority: bool = True,
+) -> str:
+    """
+    Synchronous core implementation for TTS speech via edge-tts.
+
+    Shared by the MCP `speak` tool (conductor.server) and the `cm speak` CLI
+    verb (conductor.cli.speak). All voice/rate/pitch/volume resolution,
+    cache management, audio-lock acquisition, and player dispatch happens
+    here. Returns a short status message (same string the MCP tool returns)
+    so callers can surface it verbatim.
+
+    Args:
+        text: Text to speak.
+        voice: Edge TTS voice (defaults to config default, or worker's
+            assigned voice when worker_id is set).
+        rate: Speech rate override (e.g. "+20%"). Default from config.
+        pitch: Pitch override (e.g. "+0Hz"). Default from config.
+        volume: Volume override (e.g. "+0%"). Default from config.
+        worker_id: If set and voice is None, uses the worker's unique voice.
+        blocking: If True, block until playback finishes.
+        priority: If True, wait up to 5s for the audio lock (direct calls
+            take priority over fire-and-forget hook calls). If False and
+            the lock is held, skip playback and return immediately.
+
+    Returns:
+        Short status string — "Speaking: ..." on success, or an error
+        message on failure (gated / TTS failed / no player, etc.). Never
+        raises for expected failures.
+    """
+    import fcntl
+
+    config = load_config()
+
+    # Gate: voice.enabled is the canonical on/off switch (cm-y7t). False
+    # means no generation, no playback — mirrors state-tracker's guard.
+    if not config["voice"].get("enabled", True):
+        return "audio disabled (voice.enabled=false in config)"
+
+    # Determine voice
+    if voice is None:
+        if worker_id:
+            voice = get_worker_voice(worker_id)
+        else:
+            voice = config["voice"]["default"]
+
+    # Determine rate / pitch / volume (CLI flags override config;
+    # config falls back to per-key defaults if missing).
+    if rate is None:
+        rate = config["voice"]["rate"]
+    if pitch is None:
+        pitch = config["voice"].get("pitch", "+0Hz")
+    if volume is None:
+        volume = config["voice"].get("volume", "+0%")
+
+    # Cache key includes all four knobs so changes invalidate properly.
+    cache_key = hashlib.md5(
+        f"{voice}:{rate}:{pitch}:{volume}:{text}".encode()
+    ).hexdigest()
+    cache_file = AUDIO_CACHE_DIR / f"{cache_key}.mp3"
+
+    # Generate audio if not cached
+    if not cache_file.exists():
+        try:
+            subprocess.run(
+                [
+                    "edge-tts", "--voice", voice, "--rate", rate,
+                    "--pitch", pitch, "--volume", volume,
+                    "--text", text, "--write-media", str(cache_file),
+                ],
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as e:
+            return (
+                "TTS generation failed: "
+                f"{e.stderr.decode() if e.stderr else str(e)}"
+            )
+        except FileNotFoundError:
+            return "edge-tts not found. Install with: pip install edge-tts"
+
+    # Acquire audio lock (priority=True waits briefly, False skips if busy)
+    lock_fd = None
+    try:
+        lock_fd = open(AUDIO_LOCK_FILE, "w")
+        if priority:
+            # Wait up to 5 seconds for lock - direct calls take priority.
+            acquired = False
+            for _ in range(50):
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
+                    break
+                except BlockingIOError:
+                    time.sleep(0.1)
+            # If we didn't acquire, proceed anyway for priority calls.
+            _ = acquired
+        else:
+            # Non-blocking — skip if busy.
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return "Audio busy, skipped"
+
+        # Try multiple audio players in order of preference.
+        players = [
+            (["mpv", "--no-video", "--really-quiet", str(cache_file)], "mpv"),
+            (["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(cache_file)], "ffplay"),
+            (["cvlc", "--play-and-exit", "--quiet", str(cache_file)], "vlc"),
+        ]
+
+        played = False
+        for cmd, _name in players:
+            try:
+                if blocking or priority:
+                    # Priority calls block to hold lock during playback.
+                    subprocess.run(cmd, check=True, capture_output=True)
+                else:
+                    subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                played = True
+                break
+            except FileNotFoundError:
+                continue
+
+        if not played:
+            return (
+                f"Audio cached at {cache_file} - "
+                "install mpv, ffplay, or vlc to play"
+            )
+
+    finally:
+        if lock_fd:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                lock_fd.close()
+            except Exception:
+                pass
+
+    return f"Speaking: {text[:50]}{'...' if len(text) > 50 else ''}"

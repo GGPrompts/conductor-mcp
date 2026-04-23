@@ -11,7 +11,6 @@ Brings TabzChrome's orchestration superpowers to any terminal.
 """
 
 import asyncio
-import hashlib
 import json
 import os
 import subprocess
@@ -21,8 +20,6 @@ from typing import Optional
 from mcp.server.fastmcp import FastMCP
 
 from conductor.core import (
-    AUDIO_CACHE_DIR,
-    AUDIO_LOCK_FILE,
     DEFAULT_DELAY_MS,
     STATE_DIR,
     WATCH_DIR,
@@ -34,6 +31,7 @@ from conductor.core import (
     load_config,
     release_worker_voice,
     resolve_profile,
+    speak_impl,
 )
 from conductor.protocol import (
     ContextPercent,
@@ -193,7 +191,7 @@ When done:
 
 
 @mcp.tool()
-async def speak(
+def speak(
     text: str,
     voice: Optional[str] = None,
     rate: Optional[str] = None,
@@ -215,106 +213,14 @@ async def speak(
     Returns:
         Confirmation message
     """
-    import fcntl
-
-    config = load_config()
-
-    # Gate: voice.enabled is the canonical on/off switch (cm-y7t). False means
-    # no generation, no playback — mirrors state-tracker's CLAUDE_AUDIO guard.
-    if not config["voice"].get("enabled", True):
-        return "audio disabled (voice.enabled=false in config)"
-
-    # Determine voice
-    if voice is None:
-        if worker_id:
-            voice = get_worker_voice(worker_id)
-        else:
-            voice = config["voice"]["default"]
-
-    # Determine rate
-    if rate is None:
-        rate = config["voice"]["rate"]
-
-    # Pitch + volume come from canonical config (cm-y7t). edge-tts accepts
-    # them as separate flags — cache key includes all four so rate/pitch/volume
-    # changes invalidate properly.
-    pitch = config["voice"].get("pitch", "+0Hz")
-    volume = config["voice"].get("volume", "+0%")
-
-    # Generate cache key
-    cache_key = hashlib.md5(f"{voice}:{rate}:{pitch}:{volume}:{text}".encode()).hexdigest()
-    cache_file = AUDIO_CACHE_DIR / f"{cache_key}.mp3"
-
-    # Generate audio if not cached
-    if not cache_file.exists():
-        try:
-            # Use edge-tts CLI
-            subprocess.run(
-                ["edge-tts", "--voice", voice, "--rate", rate,
-                 "--pitch", pitch, "--volume", volume,
-                 "--text", text, "--write-media", str(cache_file)],
-                check=True,
-                capture_output=True
-            )
-        except subprocess.CalledProcessError as e:
-            return f"TTS generation failed: {e.stderr.decode() if e.stderr else str(e)}"
-        except FileNotFoundError:
-            return "edge-tts not found. Install with: pip install edge-tts"
-
-    # Acquire audio lock (priority=True waits, False skips if busy)
-    lock_fd = None
-    try:
-        lock_fd = open(AUDIO_LOCK_FILE, 'w')
-        if priority:
-            # Wait up to 5 seconds for lock - direct calls take priority
-            for _ in range(50):
-                try:
-                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except BlockingIOError:
-                    await asyncio.sleep(0.1)
-            else:
-                # Couldn't get lock, proceed anyway for priority calls
-                pass
-        else:
-            # Non-blocking - skip if busy
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                return "Audio busy, skipped"
-
-        # Try multiple audio players in order of preference
-        players = [
-            (["mpv", "--no-video", "--really-quiet", str(cache_file)], "mpv"),
-            (["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(cache_file)], "ffplay"),
-            (["cvlc", "--play-and-exit", "--quiet", str(cache_file)], "vlc"),
-        ]
-
-        played = False
-        for cmd, name in players:
-            try:
-                if blocking or priority:
-                    # Priority calls block to hold lock during playback
-                    subprocess.run(cmd, check=True, capture_output=True)
-                else:
-                    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                played = True
-                break
-            except FileNotFoundError:
-                continue
-
-        if not played:
-            return f"Audio cached at {cache_file} - install mpv, ffplay, or vlc to play"
-
-    finally:
-        if lock_fd:
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                lock_fd.close()
-            except:
-                pass
-
-    return f"Speaking: {text[:50]}{'...' if len(text) > 50 else ''}"
+    return speak_impl(
+        text,
+        voice=voice,
+        rate=rate,
+        worker_id=worker_id,
+        blocking=blocking,
+        priority=priority,
+    )
 
 
 @mcp.tool()

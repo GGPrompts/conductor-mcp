@@ -59,6 +59,14 @@ SHARED_SURFACE: list[str] = [
     "zoom_pane",
     "apply_layout",
     "rebalance_panes",
+    # cm-aax.7: watch / hook / config verbs.
+    "watch_pane",
+    "stop_watch",
+    "read_watch",
+    "set_pane_hook",
+    "clear_hook",
+    "list_hooks",
+    "get_config",
 ]
 
 # MCP name -> CLI path (space-separated). Missing entries mean the CLI
@@ -82,6 +90,14 @@ CLI_PATH_MAP: dict[str, str] = {
     "zoom_pane": "zoom",
     "apply_layout": "layout apply",
     "rebalance_panes": "layout rebalance",
+    # cm-aax.7: watch / hook / config verbs.
+    "watch_pane": "watch start",
+    "stop_watch": "watch stop",
+    "read_watch": "watch read",
+    "set_pane_hook": "hook set",
+    "clear_hook": "hook clear",
+    "list_hooks": "hook list",
+    "get_config": "config get",
 }
 
 

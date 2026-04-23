@@ -27,24 +27,31 @@ from conductor.core import (
     _get_context_from_state_files,
     _get_context_from_terminal,
     apply_layout_impl,
+    clear_hook_impl,
     create_grid_impl,
     create_session_impl,
     create_window_impl,
     focus_pane_impl,
+    get_config_impl,
     get_worker_voice,
     kill_pane_impl,
     kill_worker_impl,
+    list_hooks_impl,
     list_panes_core,
     load_config,
+    read_watch_impl,
     rebalance_panes_impl,
     resize_pane_impl,
     resolve_profile,
     send_keys_impl,
+    set_pane_hook_impl,
     show_popup_impl,
     show_status_popup_impl,
     spawn_worker_in_pane_impl,
     speak_impl,
     split_pane_impl,
+    stop_watch_impl,
+    watch_pane_impl,
     zoom_pane_impl,
 )
 from conductor.protocol import (
@@ -929,27 +936,7 @@ def watch_pane(
     Returns:
         Dict with output file path and status
     """
-    if output_file is None:
-        safe_id = pane_id.replace("%", "pane-")
-        output_file = str(WATCH_DIR / f"{safe_id}.log")
-
-    # Ensure output file exists and is empty
-    Path(output_file).write_text("")
-
-    # Start piping output to file
-    result = subprocess.run(
-        ["tmux", "pipe-pane", "-t", pane_id, f"cat >> {output_file}"],
-        capture_output=True, text=True
-    )
-
-    if result.returncode != 0:
-        return {"error": result.stderr.strip()}
-
-    return {
-        "pane_id": pane_id,
-        "output_file": output_file,
-        "status": "watching"
-    }
+    return watch_pane_impl(pane_id, output_file=output_file)
 
 
 @mcp.tool()
@@ -963,16 +950,7 @@ def stop_watch(pane_id: str) -> str:
     Returns:
         Confirmation message
     """
-    # Empty pipe-pane command stops the pipe
-    result = subprocess.run(
-        ["tmux", "pipe-pane", "-t", pane_id],
-        capture_output=True, text=True
-    )
-
-    if result.returncode != 0:
-        return f"Failed to stop watch: {result.stderr.strip()}"
-
-    return f"Stopped watching pane: {pane_id}"
+    return stop_watch_impl(pane_id)
 
 
 @mcp.tool()
@@ -992,21 +970,7 @@ def read_watch(
     Returns:
         Recent output from the watch file
     """
-    if output_file is None:
-        safe_id = pane_id.replace("%", "pane-")
-        output_file = str(WATCH_DIR / f"{safe_id}.log")
-
-    path = Path(output_file)
-    if not path.exists():
-        return f"No watch file found for {pane_id}. Start with watch_pane() first."
-
-    # Read last N lines
-    try:
-        content = path.read_text()
-        all_lines = content.splitlines()
-        return "\n".join(all_lines[-lines:])
-    except Exception as e:
-        return f"Error reading watch file: {e}"
+    return read_watch_impl(pane_id, lines=lines, output_file=output_file)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1163,30 +1127,7 @@ def set_pane_hook(
     Returns:
         Confirmation message
     """
-    valid_events = [
-        "pane-died", "pane-exited", "pane-focus-in", "pane-focus-out",
-        "pane-mode-changed", "pane-set-clipboard"
-    ]
-
-    if event not in valid_events:
-        return f"Invalid event. Valid events: {', '.join(valid_events)}"
-
-    args = ["tmux", "set-hook"]
-
-    if session:
-        args.extend(["-t", session])
-    else:
-        args.append("-g")  # Global hook
-
-    args.extend([event, f"run-shell '{command}'"])
-
-    result = subprocess.run(args, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        return f"Failed to set hook: {result.stderr.strip()}"
-
-    scope = f"session {session}" if session else "global"
-    return f"Hook set ({scope}): {event} -> {command}"
+    return set_pane_hook_impl(event, command, session=session)
 
 
 @mcp.tool()
@@ -1204,19 +1145,7 @@ def clear_hook(
     Returns:
         Confirmation message
     """
-    args = ["tmux", "set-hook"]
-
-    if session:
-        args.extend(["-t", session, "-u", event])
-    else:
-        args.extend(["-gu", event])
-
-    result = subprocess.run(args, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        return f"Failed to clear hook: {result.stderr.strip()}"
-
-    return f"Hook cleared: {event}"
+    return clear_hook_impl(event, session=session)
 
 
 @mcp.tool()
@@ -1230,31 +1159,7 @@ def list_hooks(session: Optional[str] = None) -> list[dict]:
     Returns:
         List of hook definitions
     """
-    args = ["tmux", "show-hooks"]
-
-    if session:
-        args.extend(["-t", session])
-    else:
-        args.append("-g")
-
-    result = subprocess.run(args, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        return []
-
-    hooks = []
-    for line in result.stdout.strip().split("\n"):
-        if not line:
-            continue
-        # Format: "event command"
-        parts = line.split(" ", 1)
-        if len(parts) >= 2:
-            hooks.append({
-                "event": parts[0],
-                "command": parts[1]
-            })
-
-    return hooks
+    return list_hooks_impl(session=session)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1371,7 +1276,7 @@ def get_config() -> dict:
     - delay settings
     - current worker voice assignments
     """
-    return load_config()
+    return get_config_impl()
 
 
 # User-facing voice tools (list_voices, test_voice, reset_voice_assignments)

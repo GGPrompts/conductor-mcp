@@ -101,6 +101,26 @@ def emit(
     emit_tsv(records, fields)
 
 
+def flatten_config(d: dict, prefix: str = "") -> list[tuple[str, Any]]:
+    """Flatten nested config dict into (dot-path, value) pairs.
+
+    Shared by `cm config get` (and future `cm config *` verbs). Nested dicts
+    recurse with dotted keys (`voice.enabled`, `delays.send_keys_ms`). Lists,
+    primitives, and other leaves terminate recursion — callers decide how to
+    serialise non-scalar leaves (typically JSON-encode them on a single line
+    so TSV rows stay one record per line). Key order follows insertion order,
+    which matches `json.load`'s behaviour on Python 3.7+.
+    """
+    out: list[tuple[str, Any]] = []
+    for key, value in d.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            out.extend(flatten_config(value, path))
+        else:
+            out.append((path, value))
+    return out
+
+
 def die(message: str, *, exit_code: int = 1) -> None:
     """Write an error message to stderr and exit non-zero.
 
@@ -119,5 +139,6 @@ __all__ = [
     "emit",
     "emit_tsv",
     "emit_json",
+    "flatten_config",
     "die",
 ]

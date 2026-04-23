@@ -1376,3 +1376,194 @@ def rebalance_panes_impl(target: Optional[str] = None) -> str:
         return apply_result
 
     return f"Rebalanced {pane_count} panes with tiled layout"
+
+
+# ═══════════════════════════════════════════════════════════════
+# WATCH / HOOK / CONFIG IMPLs (cm-aax.7)
+# ═══════════════════════════════════════════════════════════════
+
+
+def watch_pane_impl(
+    pane_id: str,
+    output_file: Optional[str] = None,
+) -> dict:
+    """
+    Start streaming a pane's output to a file via tmux pipe-pane. Shared by
+    MCP `watch_pane` and `cm watch start`.
+
+    Returns {"pane_id", "output_file", "status": "watching"} on success or
+    {"error": str} on tmux failure. Default output path is
+    ``WATCH_DIR/pane-<id>.log`` (with `%` stripped from pane_id for FS safety).
+    """
+    if output_file is None:
+        safe_id = pane_id.replace("%", "pane-")
+        output_file = str(WATCH_DIR / f"{safe_id}.log")
+
+    # Ensure output file exists and is empty
+    Path(output_file).write_text("")
+
+    result = subprocess.run(
+        ["tmux", "pipe-pane", "-t", pane_id, f"cat >> {output_file}"],
+        capture_output=True, text=True,
+    )
+
+    if result.returncode != 0:
+        return {"error": result.stderr.strip()}
+
+    return {
+        "pane_id": pane_id,
+        "output_file": output_file,
+        "status": "watching",
+    }
+
+
+def stop_watch_impl(pane_id: str) -> str:
+    """
+    Stop streaming a pane's output. Shared by MCP `stop_watch` and
+    `cm watch stop`. Error strings are prefixed "Failed to stop watch:".
+    """
+    result = subprocess.run(
+        ["tmux", "pipe-pane", "-t", pane_id],
+        capture_output=True, text=True,
+    )
+
+    if result.returncode != 0:
+        return f"Failed to stop watch: {result.stderr.strip()}"
+
+    return f"Stopped watching pane: {pane_id}"
+
+
+def read_watch_impl(
+    pane_id: str,
+    lines: int = 50,
+    output_file: Optional[str] = None,
+) -> str:
+    """
+    Read recent output from a watched pane's log file. Shared by MCP
+    `read_watch` and `cm watch read`.
+
+    Returns last N lines joined with newlines, or a human-readable error
+    string when no watch file exists or the read fails.
+    """
+    if output_file is None:
+        safe_id = pane_id.replace("%", "pane-")
+        output_file = str(WATCH_DIR / f"{safe_id}.log")
+
+    path = Path(output_file)
+    if not path.exists():
+        return f"No watch file found for {pane_id}. Start with watch_pane() first."
+
+    try:
+        content = path.read_text()
+        all_lines = content.splitlines()
+        return "\n".join(all_lines[-lines:])
+    except Exception as e:
+        return f"Error reading watch file: {e}"
+
+
+_VALID_HOOK_EVENTS = (
+    "pane-died", "pane-exited", "pane-focus-in", "pane-focus-out",
+    "pane-mode-changed", "pane-set-clipboard",
+)
+
+
+def set_pane_hook_impl(
+    event: str,
+    command: str,
+    session: Optional[str] = None,
+) -> str:
+    """
+    Register a tmux hook. Shared by MCP `set_pane_hook` and `cm hook set`.
+
+    `session=None` installs the hook globally (`tmux set-hook -g`); pass a
+    session name to scope it (`tmux set-hook -t <session>`). Rejects unknown
+    events with a human-readable message (no tmux call) to surface typos
+    early. Error strings are prefixed "Failed to set hook:".
+    """
+    if event not in _VALID_HOOK_EVENTS:
+        return f"Invalid event. Valid events: {', '.join(_VALID_HOOK_EVENTS)}"
+
+    args = ["tmux", "set-hook"]
+
+    if session:
+        args.extend(["-t", session])
+    else:
+        args.append("-g")  # Global hook
+
+    args.extend([event, f"run-shell '{command}'"])
+
+    result = subprocess.run(args, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        return f"Failed to set hook: {result.stderr.strip()}"
+
+    scope = f"session {session}" if session else "global"
+    return f"Hook set ({scope}): {event} -> {command}"
+
+
+def clear_hook_impl(
+    event: str,
+    session: Optional[str] = None,
+) -> str:
+    """
+    Clear a previously set tmux hook. Shared by MCP `clear_hook` and
+    `cm hook clear`. Error strings are prefixed "Failed to clear hook:".
+    """
+    args = ["tmux", "set-hook"]
+
+    if session:
+        args.extend(["-t", session, "-u", event])
+    else:
+        args.extend(["-gu", event])
+
+    result = subprocess.run(args, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        return f"Failed to clear hook: {result.stderr.strip()}"
+
+    return f"Hook cleared: {event}"
+
+
+def list_hooks_impl(session: Optional[str] = None) -> list[dict]:
+    """
+    List registered tmux hooks. Shared by MCP `list_hooks` and
+    `cm hook list`. Returns [] on tmux error or no hooks.
+
+    Each record has keys {"event", "command"}. The scoping target
+    (session or global) is the caller's responsibility to remember —
+    tmux `show-hooks` does not echo it back.
+    """
+    args = ["tmux", "show-hooks"]
+
+    if session:
+        args.extend(["-t", session])
+    else:
+        args.append("-g")
+
+    result = subprocess.run(args, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        return []
+
+    hooks: list[dict] = []
+    for line in result.stdout.strip().split("\n"):
+        if not line:
+            continue
+        # Format: "event command"
+        parts = line.split(" ", 1)
+        if len(parts) >= 2:
+            hooks.append({
+                "event": parts[0],
+                "command": parts[1],
+            })
+
+    return hooks
+
+
+def get_config_impl() -> dict:
+    """
+    Return the full conductor config dict. Shared by MCP `get_config` and
+    `cm config get`. Thin passthrough to `load_config()` — kept as a
+    distinct name so the cm-aax.5/.6/.7 ``*_impl`` convention holds.
+    """
+    return load_config()

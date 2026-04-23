@@ -115,6 +115,81 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Handle profile delete confirmation (cm-b6r)
+	if m.inputMode == "profile_delete_confirm" {
+		switch msg.String() {
+		case "y", "Y":
+			target := m.profileEditTarget
+			m.inputMode = ""
+			m.inputPrompt = ""
+			m.profileEditTarget = ""
+			if err := settingsDeleteProfile(target); err != nil {
+				m.statusMsg = "Failed to delete profile: " + err.Error()
+			} else {
+				m.statusMsg = "Deleted profile: " + target
+			}
+			// Clamp cursor to new list size.
+			newCount := profilesSectionCursorCount()
+			if m.settingsCursor >= newCount {
+				m.settingsCursor = newCount - 1
+			}
+			if m.settingsCursor < 0 {
+				m.settingsCursor = 0
+			}
+			m.updateSettingsContent()
+			m.adjustSettingsScrollToCursor()
+			return m, nil
+		case "n", "N", "esc":
+			m.inputMode = ""
+			m.inputPrompt = ""
+			m.profileEditTarget = ""
+			m.statusMsg = "Delete cancelled"
+			return m, nil
+		}
+		return m, nil
+	}
+
+	// Handle profile add / edit text entry + timing edit (cm-b6r). All four
+	// text-capture modes share the same keystroke handling — only the Enter
+	// behavior (and sometimes cancellation cleanup) differs.
+	if m.inputMode == "profile_add_name" ||
+		m.inputMode == "profile_edit_name" ||
+		m.inputMode == "profile_edit_command" ||
+		m.inputMode == "profile_edit_description" ||
+		m.inputMode == "timing_edit" {
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.inputMode = ""
+			m.inputBuffer = ""
+			m.inputPrompt = ""
+			m.profileEditTarget = ""
+			m.profileEditName = ""
+			m.profileEditCommand = ""
+			m.timingEditField = ""
+			m.statusMsg = "Cancelled"
+			return m, nil
+
+		case tea.KeyEnter:
+			return m.handleSettingsInputEnter()
+
+		case tea.KeyBackspace:
+			if len(m.inputBuffer) > 0 {
+				runes := []rune(m.inputBuffer)
+				m.inputBuffer = string(runes[:len(runes)-1])
+			}
+			return m, nil
+
+		case tea.KeySpace:
+			m.inputBuffer += " "
+			return m, nil
+
+		case tea.KeyRunes:
+			m.inputBuffer += string(msg.Runes)
+			return m, nil
+		}
+		return m, nil
+	}
+
 	// Handle kill session confirmation
 	if m.inputMode == "kill_confirm" {
 		switch msg.String() {
@@ -398,6 +473,74 @@ func voiceCursorLine(cursor int) int {
 	}
 }
 
+// profilesSectionCursorCount returns the total cursor positions in the
+// Profiles section: one per existing profile plus the "+ Add profile" row.
+func profilesSectionCursorCount() int {
+	return len(settingsListProfiles()) + 1
+}
+
+// profilePreambleLines is the number of content lines before the first
+// cursor-addressable row in the Profiles section. Must stay in sync with
+// updateSettingsContent (model.go). Layout (indices in m.settingsContent):
+//   0: tabs row
+//   1: DIVIDER
+//   2: blank
+//   3: DETAILS:header:Profiles
+//   4..: first profile name row (cursor 0)
+const profilePreambleLines = 4
+
+// profileCursorLine returns the content-line index for a given Profiles-
+// section cursor value. Each profile renders as 3 content lines (name + 2
+// DETAILS:detail rows); the "+ Add profile" row sits after the last profile.
+// When there are zero profiles, the initial "(no profiles yet)" detail row
+// shifts everything down by 1 line.
+func profileCursorLine(cursor int) int {
+	profileCount := len(settingsListProfiles())
+	if profileCount == 0 {
+		// Only row is "+ Add profile", immediately after the "(no profiles)" detail.
+		return profilePreambleLines + 1
+	}
+	if cursor < profileCount {
+		return profilePreambleLines + cursor*3
+	}
+	// "+ Add profile" row — after all profile blocks (3 lines each).
+	return profilePreambleLines + profileCount*3
+}
+
+// timingSectionCursorCount returns the number of cursor-addressable rows in
+// the Timing section.
+func timingSectionCursorCount() int {
+	return len(timingFieldOrder)
+}
+
+// timingPreambleLines is the number of content lines before the first Timing
+// cursor row. Layout:
+//   0: tabs row
+//   1: DIVIDER
+//   2: blank
+//   3: DETAILS:header:Layout & Timing
+//   4..: first field row (cursor 0)
+const timingPreambleLines = 4
+
+// timingCursorLine returns the content-line index for a Timing cursor value.
+func timingCursorLine(cursor int) int {
+	return timingPreambleLines + cursor
+}
+
+// settingsSectionCursorCount returns the number of cursor-addressable rows in
+// the currently active Settings subsection. Used to clamp cursor movement.
+func (m model) settingsSectionCursorCount() int {
+	switch m.settingsSection {
+	case settingsSectionVoice:
+		return voiceSectionCursorCount()
+	case settingsSectionProfile:
+		return profilesSectionCursorCount()
+	case settingsSectionTiming:
+		return timingSectionCursorCount()
+	}
+	return 0
+}
+
 // settingsViewportSize returns the number of content rows visible inside the
 // Settings panel (innerHeight; top-tab panels have no reserved help line).
 func (m model) settingsViewportSize() int {
@@ -428,14 +571,22 @@ func (m *model) clampSettingsScrollOffset() {
 	}
 }
 
-// adjustSettingsScrollToCursor keeps the Voice-section cursor (settingsCursor)
-// visible inside the viewport by nudging sessionsScrollOffset.
+// adjustSettingsScrollToCursor keeps the active-section cursor visible inside
+// the viewport by nudging sessionsScrollOffset. Dispatches per subsection so
+// each one can own its preamble math.
 func (m *model) adjustSettingsScrollToCursor() {
-	if m.settingsSection != settingsSectionVoice {
+	var cursorLine int
+	switch m.settingsSection {
+	case settingsSectionVoice:
+		cursorLine = voiceCursorLine(m.settingsCursor)
+	case settingsSectionProfile:
+		cursorLine = profileCursorLine(m.settingsCursor)
+	case settingsSectionTiming:
+		cursorLine = timingCursorLine(m.settingsCursor)
+	default:
 		return
 	}
 	viewport := m.settingsViewportSize()
-	cursorLine := voiceCursorLine(m.settingsCursor)
 
 	// Scrolled past cursor above viewport: scroll up.
 	if cursorLine < m.sessionsScrollOffset {
@@ -446,6 +597,135 @@ func (m *model) adjustSettingsScrollToCursor() {
 		m.sessionsScrollOffset = cursorLine - viewport + 1
 	}
 	m.clampSettingsScrollOffset()
+}
+
+// handleSettingsInputEnter progresses whichever Settings input mode is active
+// when the user presses Enter. Each profile-edit step advances the wizard;
+// the add flow creates an empty stub; timing_edit validates and persists
+// (cm-b6r).
+func (m model) handleSettingsInputEnter() (tea.Model, tea.Cmd) {
+	switch m.inputMode {
+	case "profile_add_name":
+		name := strings.TrimSpace(m.inputBuffer)
+		m.inputMode = ""
+		m.inputBuffer = ""
+		m.inputPrompt = ""
+		if name == "" {
+			m.statusMsg = "Profile name cannot be empty"
+			return m, nil
+		}
+		// Refuse to silently overwrite an existing profile.
+		if existing := settingsListProfiles(); contains(existing, name) {
+			m.statusMsg = "Profile already exists: " + name
+			return m, nil
+		}
+		if err := settingsSaveProfile(name, "", ""); err != nil {
+			m.statusMsg = "Failed to create profile: " + err.Error()
+			return m, nil
+		}
+		// Position cursor on the new profile.
+		for i, p := range settingsListProfiles() {
+			if p == name {
+				m.settingsCursor = i
+				break
+			}
+		}
+		m.statusMsg = "Created profile: " + name
+		m.updateSettingsContent()
+		m.adjustSettingsScrollToCursor()
+		return m, nil
+
+	case "profile_edit_name":
+		newName := strings.TrimSpace(m.inputBuffer)
+		if newName == "" {
+			m.statusMsg = "Profile name cannot be empty"
+			return m, nil
+		}
+		m.profileEditName = newName
+		// Advance to command field.
+		cmd, _ := settingsGetProfile(m.profileEditTarget)
+		m.inputMode = "profile_edit_command"
+		m.inputBuffer = cmd
+		m.inputPrompt = fmt.Sprintf("Edit command [%s]: ", m.profileEditTarget)
+		m.statusMsg = "Edit command (Enter to advance, ESC to cancel)"
+		return m, nil
+
+	case "profile_edit_command":
+		m.profileEditCommand = m.inputBuffer
+		// Advance to description field.
+		_, desc := settingsGetProfile(m.profileEditTarget)
+		m.inputMode = "profile_edit_description"
+		m.inputBuffer = desc
+		m.inputPrompt = fmt.Sprintf("Edit description [%s]: ", m.profileEditTarget)
+		m.statusMsg = "Edit description (Enter to save, ESC to cancel)"
+		return m, nil
+
+	case "profile_edit_description":
+		target := m.profileEditTarget
+		newName := m.profileEditName
+		newCmd := m.profileEditCommand
+		newDesc := m.inputBuffer
+
+		m.inputMode = ""
+		m.inputBuffer = ""
+		m.inputPrompt = ""
+		m.profileEditTarget = ""
+		m.profileEditName = ""
+		m.profileEditCommand = ""
+
+		// Rename first if necessary, then save fields under the (possibly new) key.
+		if newName != target {
+			if err := settingsRenameProfile(target, newName); err != nil {
+				m.statusMsg = "Failed to rename profile: " + err.Error()
+				m.updateSettingsContent()
+				return m, nil
+			}
+		}
+		if err := settingsSaveProfile(newName, newCmd, newDesc); err != nil {
+			m.statusMsg = "Failed to save profile: " + err.Error()
+			m.updateSettingsContent()
+			return m, nil
+		}
+		// Keep cursor positioned on the edited profile.
+		for i, p := range settingsListProfiles() {
+			if p == newName {
+				m.settingsCursor = i
+				break
+			}
+		}
+		m.statusMsg = "Saved profile: " + newName
+		m.updateSettingsContent()
+		m.adjustSettingsScrollToCursor()
+		return m, nil
+
+	case "timing_edit":
+		field := m.timingEditField
+		value := m.inputBuffer
+		if err := settingsSaveTimingField(field, value); err != nil {
+			m.statusMsg = "Invalid " + field + ": " + err.Error()
+			// Stay in input mode so the user can correct the value.
+			return m, nil
+		}
+		m.inputMode = ""
+		m.inputBuffer = ""
+		m.inputPrompt = ""
+		m.timingEditField = ""
+		m.statusMsg = "Saved " + field + ": " + strings.TrimSpace(value)
+		m.updateSettingsContent()
+		m.adjustSettingsScrollToCursor()
+		return m, nil
+	}
+	return m, nil
+}
+
+// contains reports whether sl contains s.
+func contains(sl []string, s string) bool {
+	for _, v := range sl {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 // handleSettingsKeys handles keys while the Settings tab is active in the top panel.
@@ -474,33 +754,20 @@ func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 
 	case "up", "k":
-		if m.settingsSection == settingsSectionVoice {
-			if m.settingsCursor > 0 {
-				m.settingsCursor--
-				m.updateSettingsContent()
-				m.adjustSettingsScrollToCursor()
-			}
-			return m, nil, true
-		}
-		// Non-voice sections have no cursor: drive scroll directly.
-		if m.sessionsScrollOffset > 0 {
-			m.sessionsScrollOffset--
-			m.clampSettingsScrollOffset()
+		// All sections now have cursors (Voice, Profiles, Timing).
+		if m.settingsCursor > 0 {
+			m.settingsCursor--
+			m.updateSettingsContent()
+			m.adjustSettingsScrollToCursor()
 		}
 		return m, nil, true
 
 	case "down", "j":
-		if m.settingsSection == settingsSectionVoice {
-			if m.settingsCursor < voiceSectionCursorCount()-1 {
-				m.settingsCursor++
-				m.updateSettingsContent()
-				m.adjustSettingsScrollToCursor()
-			}
-			return m, nil, true
+		if m.settingsCursor < m.settingsSectionCursorCount()-1 {
+			m.settingsCursor++
+			m.updateSettingsContent()
+			m.adjustSettingsScrollToCursor()
 		}
-		// Non-voice sections have no cursor: drive scroll directly.
-		m.sessionsScrollOffset++
-		m.clampSettingsScrollOffset()
 		return m, nil, true
 
 	case "left", "h":
@@ -580,33 +847,31 @@ func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		viewport := m.settingsViewportSize()
 		m.sessionsScrollOffset -= viewport
 		m.clampSettingsScrollOffset()
-		if m.settingsSection == settingsSectionVoice {
-			// Pull cursor with the viewport so it stays visible.
-			m.settingsCursor -= viewport
-			if m.settingsCursor < 0 {
-				m.settingsCursor = 0
-			}
-			m.updateSettingsContent()
-			m.adjustSettingsScrollToCursor()
+		// Pull cursor with the viewport so it stays visible.
+		m.settingsCursor -= viewport
+		if m.settingsCursor < 0 {
+			m.settingsCursor = 0
 		}
+		m.updateSettingsContent()
+		m.adjustSettingsScrollToCursor()
 		return m, nil, true
 
 	case "pgdown":
 		viewport := m.settingsViewportSize()
 		m.sessionsScrollOffset += viewport
 		m.clampSettingsScrollOffset()
-		if m.settingsSection == settingsSectionVoice {
-			m.settingsCursor += viewport
-			if m.settingsCursor > voiceSectionCursorCount()-1 {
-				m.settingsCursor = voiceSectionCursorCount() - 1
-			}
-			m.updateSettingsContent()
-			m.adjustSettingsScrollToCursor()
+		total := m.settingsSectionCursorCount()
+		m.settingsCursor += viewport
+		if total > 0 && m.settingsCursor > total-1 {
+			m.settingsCursor = total - 1
 		}
+		m.updateSettingsContent()
+		m.adjustSettingsScrollToCursor()
 		return m, nil, true
 
 	case "enter":
-		if m.settingsSection == settingsSectionVoice {
+		switch m.settingsSection {
+		case settingsSectionVoice:
 			poolStart := 3
 			resetCursor := poolStart + len(voicePool)
 			switch {
@@ -641,6 +906,32 @@ func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 				}
 				m.updateSettingsContent()
 			}
+		case settingsSectionProfile:
+			profiles := settingsListProfiles()
+			if m.settingsCursor == len(profiles) {
+				// "+ Add profile" row — begin modal name entry.
+				m.inputMode = "profile_add_name"
+				m.inputBuffer = ""
+				m.inputPrompt = "New profile name: "
+				m.statusMsg = "Enter profile name (ESC to cancel)"
+			} else if m.settingsCursor >= 0 && m.settingsCursor < len(profiles) {
+				// Begin edit cycle: name → command → description.
+				target := profiles[m.settingsCursor]
+				m.inputMode = "profile_edit_name"
+				m.profileEditTarget = target
+				m.inputBuffer = target
+				m.inputPrompt = fmt.Sprintf("Edit profile name [%s]: ", target)
+				m.statusMsg = "Edit name (Enter to advance, ESC to cancel)"
+			}
+		case settingsSectionTiming:
+			if m.settingsCursor >= 0 && m.settingsCursor < len(timingFieldOrder) {
+				field := timingFieldOrder[m.settingsCursor]
+				m.inputMode = "timing_edit"
+				m.timingEditField = field
+				m.inputBuffer = timingFieldValueStr(field)
+				m.inputPrompt = fmt.Sprintf("Edit %s: ", timingFieldLabel(field))
+				m.statusMsg = "Enter new value (ESC to cancel)"
+			}
 		}
 		return m, nil, true
 
@@ -658,6 +949,21 @@ func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			}
 		}
 		return m, nil, true
+
+	case "d":
+		// Delete profile under cursor (Profiles section only). Prompts y/n.
+		if m.settingsSection == settingsSectionProfile {
+			profiles := settingsListProfiles()
+			if m.settingsCursor >= 0 && m.settingsCursor < len(profiles) {
+				target := profiles[m.settingsCursor]
+				m.inputMode = "profile_delete_confirm"
+				m.profileEditTarget = target
+				m.inputPrompt = fmt.Sprintf("Delete %s? (y/n): ", target)
+				m.statusMsg = "Confirm delete"
+			}
+			return m, nil, true
+		}
+		return m, nil, false
 	}
 
 	return m, nil, false

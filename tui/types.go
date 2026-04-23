@@ -93,6 +93,12 @@ type model struct {
 	inputPrompt  string // Prompt to show user
 	renameTarget string // Session name being renamed
 
+	// Settings input state (cm-b6r)
+	profileEditTarget  string // Name of profile currently under edit (edit/delete flows)
+	profileEditName    string // Staged new name during edit cycle (name → command → description)
+	profileEditCommand string // Staged command during edit cycle
+	timingEditField    string // Timing field currently under edit ("default_layout", ...)
+
 	// Template creation wizard
 	templateCreationMode bool
 	templateBuilder      TemplateBuilder

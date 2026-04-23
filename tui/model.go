@@ -858,46 +858,54 @@ func (m *model) updateSettingsContent() {
 		}
 
 	case settingsSectionProfile:
-		lines = append(lines, "DETAILS:header:Profiles")
+		// Profiles layout (cursor → row mapping documented in profileCursorLine,
+		// update_keyboard.go). Each profile takes one cursor slot; expanded
+		// detail rows (command/description) are not cursor-addressable.
 		profiles := settingsListProfiles()
+		lines = append(lines, "DETAILS:header:Profiles  (Enter = edit, d = delete)")
+
 		if len(profiles) == 0 {
-			lines = append(lines, "  (no profiles found in ~/.config/conductor/config.json)")
-		} else {
-			for _, p := range profiles {
-				lines = append(lines, "  - "+p)
-			}
+			lines = append(lines, "DETAILS:detail:(no profiles yet)")
 		}
-		lines = append(lines, "")
-		lines = append(lines, "DETAILS:detail:Profile CRUD from the TUI is planned — see cm-3gw follow-up.")
-		lines = append(lines, "DETAILS:detail:For now, edit ~/.config/conductor/config.json directly.")
+
+		for i, p := range profiles {
+			cmd, desc := settingsGetProfile(p)
+			selected := m.settingsCursor == i
+			nameLine := cursorMarker(selected) + p
+			if selected {
+				lines = append(lines, "SELECTED:"+nameLine)
+			} else {
+				lines = append(lines, nameLine)
+			}
+			// Detail rows (command, description) — not cursor-addressable.
+			lines = append(lines, fmt.Sprintf("DETAILS:detail:    command:     %s", cmd))
+			lines = append(lines, fmt.Sprintf("DETAILS:detail:    description: %s", desc))
+		}
+
+		// "+ Add profile" row — cursor == len(profiles)
+		addCursor := len(profiles)
+		selected := m.settingsCursor == addCursor
+		addLine := cursorMarker(selected) + "+ Add profile"
+		if selected {
+			lines = append(lines, "SELECTED:"+addLine)
+		} else {
+			lines = append(lines, addLine)
+		}
 
 	case settingsSectionTiming:
-		root := loadCanonicalRoot()
-		layout := "2x2"
-		dir := "~"
-		sendKeys := 800
-		boot := 4
-		if s, ok := root["default_layout"].(string); ok && s != "" {
-			layout = s
-		}
-		if s, ok := root["default_dir"].(string); ok && s != "" {
-			dir = s
-		}
-		if d, ok := root["delays"].(map[string]interface{}); ok {
-			if v, ok := d["send_keys_ms"].(float64); ok {
-				sendKeys = int(v)
-			}
-			if v, ok := d["claude_boot_s"].(float64); ok {
-				boot = int(v)
+		// Timing layout: cursor i maps to timingFieldOrder[i]. Cursor → content
+		// line mapping is computed by timingCursorLine (update_keyboard.go).
+		lines = append(lines, "DETAILS:header:Layout & Timing  (Enter = edit)")
+		for i, field := range timingFieldOrder {
+			val := timingFieldValueStr(field)
+			selected := m.settingsCursor == i
+			row := fmt.Sprintf("%s%-16s %s", cursorMarker(selected), timingFieldLabel(field)+":", val)
+			if selected {
+				lines = append(lines, "SELECTED:"+row)
+			} else {
+				lines = append(lines, row)
 			}
 		}
-		lines = append(lines, "DETAILS:header:Layout & Timing")
-		lines = append(lines, fmt.Sprintf("DETAILS:detail:default_layout: %s", layout))
-		lines = append(lines, fmt.Sprintf("DETAILS:detail:default_dir:    %s", dir))
-		lines = append(lines, fmt.Sprintf("DETAILS:detail:send_keys_ms:   %d", sendKeys))
-		lines = append(lines, fmt.Sprintf("DETAILS:detail:claude_boot_s:  %d", boot))
-		lines = append(lines, "")
-		lines = append(lines, "DETAILS:detail:Editing from the TUI is planned — see cm-3gw follow-up.")
 	}
 
 	lines = append(lines, "")

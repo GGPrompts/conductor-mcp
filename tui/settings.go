@@ -3,6 +3,9 @@ package main
 import (
 	"fmt"
 	"os/exec"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -302,7 +305,8 @@ func testVoice(voice, rate, text string) error {
 	return fmt.Errorf("no audio player found (install mpv, ffplay, or vlc)")
 }
 
-// listProfiles returns profiles from the canonical config.
+// listProfiles returns profile names sorted alphabetically. Sorted output keeps
+// the cursor row stable across reloads (cm-b6r).
 func settingsListProfiles() []string {
 	root := loadCanonicalRoot()
 	profiles, ok := root["profiles"].(map[string]interface{})
@@ -313,5 +317,223 @@ func settingsListProfiles() []string {
 	for k := range profiles {
 		names = append(names, k)
 	}
+	sort.Strings(names)
 	return names
+}
+
+// settingsGetProfile returns the (command, description) pair for a named
+// profile, or empty strings if it does not exist (cm-b6r).
+func settingsGetProfile(name string) (command, description string) {
+	root := loadCanonicalRoot()
+	profiles, _ := root["profiles"].(map[string]interface{})
+	if profiles == nil {
+		return "", ""
+	}
+	entry, _ := profiles[name].(map[string]interface{})
+	if entry == nil {
+		return "", ""
+	}
+	if c, ok := entry["command"].(string); ok {
+		command = c
+	}
+	if d, ok := entry["description"].(string); ok {
+		description = d
+	}
+	return command, description
+}
+
+// settingsSaveProfile creates or updates a profile entry in the canonical
+// config. Missing fields are stored as empty strings (stub-friendly) (cm-b6r).
+func settingsSaveProfile(name, command, description string) error {
+	root := loadCanonicalRoot()
+	if root == nil {
+		root = map[string]interface{}{}
+	}
+	profiles, _ := root["profiles"].(map[string]interface{})
+	if profiles == nil {
+		profiles = map[string]interface{}{}
+	}
+	entry, _ := profiles[name].(map[string]interface{})
+	if entry == nil {
+		entry = map[string]interface{}{}
+	}
+	entry["command"] = command
+	entry["description"] = description
+	profiles[name] = entry
+	root["profiles"] = profiles
+	return saveCanonicalRoot(root)
+}
+
+// settingsDeleteProfile removes a profile from the canonical config. Returns
+// nil if the profile didn't exist (idempotent) (cm-b6r).
+func settingsDeleteProfile(name string) error {
+	root := loadCanonicalRoot()
+	if root == nil {
+		return nil
+	}
+	profiles, _ := root["profiles"].(map[string]interface{})
+	if profiles == nil {
+		return nil
+	}
+	delete(profiles, name)
+	root["profiles"] = profiles
+	return saveCanonicalRoot(root)
+}
+
+// settingsRenameProfile renames a profile, preserving command/description.
+// No-op if oldName == newName. Errors if newName already exists (cm-b6r).
+func settingsRenameProfile(oldName, newName string) error {
+	if oldName == newName {
+		return nil
+	}
+	if newName == "" {
+		return fmt.Errorf("profile name cannot be empty")
+	}
+	root := loadCanonicalRoot()
+	if root == nil {
+		return fmt.Errorf("profile %q not found", oldName)
+	}
+	profiles, _ := root["profiles"].(map[string]interface{})
+	if profiles == nil {
+		return fmt.Errorf("profile %q not found", oldName)
+	}
+	if _, exists := profiles[newName]; exists {
+		return fmt.Errorf("profile %q already exists", newName)
+	}
+	entry, ok := profiles[oldName]
+	if !ok {
+		return fmt.Errorf("profile %q not found", oldName)
+	}
+	profiles[newName] = entry
+	delete(profiles, oldName)
+	root["profiles"] = profiles
+	return saveCanonicalRoot(root)
+}
+
+// Timing section helpers. All values live at the canonical top level:
+//   default_layout: string like "2x2"
+//   default_dir:    string (home-relative ok)
+//   delays.send_keys_ms: integer
+//   delays.claude_boot_s: integer
+
+const (
+	timingDefaultLayout = "2x2"
+	timingDefaultDir    = "~"
+	timingDefaultSendMs = 800
+	timingDefaultBootS  = 4
+)
+
+// settingsGetTiming returns all four timing values with defaults (cm-b6r).
+func settingsGetTiming() (layout, dir string, sendKeysMs, claudeBootS int) {
+	root := loadCanonicalRoot()
+	layout = timingDefaultLayout
+	dir = timingDefaultDir
+	sendKeysMs = timingDefaultSendMs
+	claudeBootS = timingDefaultBootS
+	if s, ok := root["default_layout"].(string); ok && s != "" {
+		layout = s
+	}
+	if s, ok := root["default_dir"].(string); ok && s != "" {
+		dir = s
+	}
+	if d, ok := root["delays"].(map[string]interface{}); ok {
+		if v, ok := d["send_keys_ms"].(float64); ok {
+			sendKeysMs = int(v)
+		}
+		if v, ok := d["claude_boot_s"].(float64); ok {
+			claudeBootS = int(v)
+		}
+	}
+	return layout, dir, sendKeysMs, claudeBootS
+}
+
+// layoutPattern enforces the Nx M grid form for default_layout (cm-b6r).
+var layoutPattern = regexp.MustCompile(`^[1-9]x[1-9]$`)
+
+// settingsSaveTimingField validates and persists a single timing field. The
+// field key is one of: "default_layout", "default_dir", "send_keys_ms",
+// "claude_boot_s" (cm-b6r).
+func settingsSaveTimingField(field, value string) error {
+	value = strings.TrimSpace(value)
+	root := loadCanonicalRoot()
+	if root == nil {
+		root = map[string]interface{}{}
+	}
+	switch field {
+	case "default_layout":
+		if !layoutPattern.MatchString(value) {
+			return fmt.Errorf("layout must match NxM (e.g. 2x2), got %q", value)
+		}
+		root["default_layout"] = value
+	case "default_dir":
+		if value == "" {
+			return fmt.Errorf("default_dir cannot be empty")
+		}
+		root["default_dir"] = value
+	case "send_keys_ms":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 {
+			return fmt.Errorf("send_keys_ms must be a non-negative integer, got %q", value)
+		}
+		delays, _ := root["delays"].(map[string]interface{})
+		if delays == nil {
+			delays = map[string]interface{}{}
+		}
+		delays["send_keys_ms"] = float64(n)
+		root["delays"] = delays
+	case "claude_boot_s":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 {
+			return fmt.Errorf("claude_boot_s must be a non-negative integer, got %q", value)
+		}
+		delays, _ := root["delays"].(map[string]interface{})
+		if delays == nil {
+			delays = map[string]interface{}{}
+		}
+		delays["claude_boot_s"] = float64(n)
+		root["delays"] = delays
+	default:
+		return fmt.Errorf("unknown timing field %q", field)
+	}
+	return saveCanonicalRoot(root)
+}
+
+// timingFieldOrder is the canonical cursor order for the Timing section.
+// Cursor index maps directly to this slice (cm-b6r).
+var timingFieldOrder = []string{
+	"default_layout",
+	"default_dir",
+	"send_keys_ms",
+	"claude_boot_s",
+}
+
+// timingFieldLabel returns the short label used in the Settings panel.
+func timingFieldLabel(field string) string {
+	switch field {
+	case "default_layout":
+		return "default_layout"
+	case "default_dir":
+		return "default_dir"
+	case "send_keys_ms":
+		return "send_keys_ms"
+	case "claude_boot_s":
+		return "claude_boot_s"
+	}
+	return field
+}
+
+// timingFieldValueStr returns the current field value as a display string.
+func timingFieldValueStr(field string) string {
+	layout, dir, sendMs, bootS := settingsGetTiming()
+	switch field {
+	case "default_layout":
+		return layout
+	case "default_dir":
+		return dir
+	case "send_keys_ms":
+		return strconv.Itoa(sendMs)
+	case "claude_boot_s":
+		return strconv.Itoa(bootS)
+	}
+	return ""
 }

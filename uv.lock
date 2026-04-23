@@ -311,6 +311,7 @@ name = "conductor-mcp"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "click" },
     { name = "edge-tts" },
     { name = "mcp" },
 ]
@@ -323,6 +324,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "click", specifier = ">=8.0" },
     { name = "edge-tts", specifier = ">=6.0.0" },
     { name = "mcp", specifier = ">=1.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },

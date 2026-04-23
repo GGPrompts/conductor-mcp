@@ -17,8 +17,8 @@ Use `AskUserQuestion` to present this menu:
 **Header:** "Help topic"
 **Options:**
 1. **Quick Reference** — "Browse all conductor tools and common workflows"
-2. **Settings** — "View and adjust conductor configuration"
-3. **Profiles** — "Manage spawn profiles (claude, codex, gemini, tfe, etc.)"
+2. **Settings** — "Where to adjust conductor configuration"
+3. **Profiles** — "Where to manage spawn profiles (claude, codex, gemini, tfe, etc.)"
 4. **Hotkeys** — "tmux keybinding cheat sheet"
 
 ## Step 2: Handle Selection
@@ -33,30 +33,26 @@ Use `AskUserQuestion` to present this menu:
 
 ### Settings
 
-1. Call `get_config()` via MCP to get current configuration
-2. Present settings in a formatted table:
-   - Max workers, default layout, default dir
-   - Voice: name, rate, pitch, random per worker
-   - Delays: send_keys_ms, claude_boot_s
-3. Use `AskUserQuestion` to ask what they'd like to change:
-   - **Max workers** — "Change concurrent worker limit"
-   - **Voice settings** — "Change TTS voice, speed, or pitch"
-   - **Delays** — "Adjust send_keys or boot timing"
-   - **Default directory** — "Set fallback project directory"
-4. Apply changes with `set_config()`
+Settings (voice, layout, timing) now live in the conductor-tui Settings panel.
+Tell the user:
+
+- Open conductor-tui (`Ctrl+b o` in tmux for the popup, or run `conductor-tui` directly)
+- Press `1` repeatedly in the top panel to cycle: Sessions → Templates → Settings
+- The Settings tab has sections for Voice, Profiles, and Layout/Timing
+
+For a read-only peek at current config, call `get_config()` via MCP.
+
+The canonical config lives at `~/.config/conductor/config.json` and is shared by the MCP server and the TUI.
 
 ### Profiles
 
-1. Call `list_profiles()` via MCP to get current profiles
-2. Present profiles in a table: name | command | pinned dir | effective dir
-3. Use `AskUserQuestion` to ask what they'd like to do:
-   - **Add/edit profile** — "Create or update a spawn profile"
-   - **Remove profile** — "Delete an existing profile"
-   - **Set default dir** — "Set global fallback directory for all profiles"
-   - **Test spawn** — "Test a profile with a dry run description"
-4. For add/edit: ask for name, command, and optional pinned dir, then call `add_profile()`
-5. For remove: ask which profile, then call `remove_profile()`
-6. For default dir: ask for path, then call `set_config(default_dir=...)`
+Profiles (claude, codex, gemini, tfe, lazygit, copilot, etc.) are managed from the conductor-tui Settings panel:
+
+- Open conductor-tui and cycle to the Settings tab (press `1` until the Settings tab is active)
+- Switch to the Profiles sub-section with `Tab`
+- View the list of configured profiles
+
+For now, creating/editing profiles is still easiest by editing `~/.config/conductor/config.json` directly (full CRUD in the TUI is a follow-up). Claude continues to consume profiles via `smart_spawn(profile="name")`.
 
 ### Hotkeys
 

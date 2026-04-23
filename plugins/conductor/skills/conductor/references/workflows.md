@@ -74,8 +74,9 @@ Clean shutdown of all workers:
 3. kill_worker("BD-def",             # Kill + clean worktree
      cleanup_worktree=True,
      project_dir="/path/to/project")
-4. reset_voice_assignments()         # Free voice pool
 ```
+
+Voice assignments are managed by the user in the conductor-tui Settings panel; the MCP server no longer exposes a tool to reset them.
 
 ## 6. Custom Grid Layout
 

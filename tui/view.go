@@ -95,7 +95,7 @@ func (m model) renderMultiPanel() string {
 
 // renderTitleBar renders the title bar
 func (m model) renderTitleBar() string {
-	title := titleStyle.Render("Tmuxplexer")
+	title := titleStyle.Render("conductor")
 	padding := m.width - lipgloss.Width(title)
 	if padding < 0 {
 		padding = 0
@@ -394,10 +394,14 @@ func (m model) renderUnifiedView() string {
 
 		var topPanelContent []string
 		var topPanelName string
-		if m.sessionsTab == "templates" {
+		switch m.sessionsTab {
+		case "templates":
 			topPanelContent = m.templatesContent
 			topPanelName = "templates"
-		} else {
+		case "settings":
+			topPanelContent = m.settingsContent
+			topPanelName = "settings"
+		default:
 			topPanelContent = m.sessionsContent
 			topPanelName = "sessions"
 		}
@@ -416,13 +420,17 @@ func (m model) renderUnifiedView() string {
 	// Get adaptive panel heights based on focus state
 	sessionsHeight, previewHeight, commandHeight := m.calculateAdaptivePanelHeights(contentHeight)
 
-	// Render each panel with appropriate content (top panel switches between sessions/templates)
+	// Render each panel with appropriate content (top panel cycles sessions/templates/settings)
 	var topPanelContent []string
 	var topPanelName string
-	if m.sessionsTab == "templates" {
+	switch m.sessionsTab {
+	case "templates":
 		topPanelContent = m.templatesContent
 		topPanelName = "templates"
-	} else {
+	case "settings":
+		topPanelContent = m.settingsContent
+		topPanelName = "settings"
+	default:
 		topPanelContent = m.sessionsContent
 		topPanelName = "sessions"
 	}
@@ -453,7 +461,7 @@ func (m model) renderDynamicPanel(panelName string, width, height int, content [
 	isFocused := false
 	switch m.focusState {
 	case FocusSessions:
-		isFocused = (panelName == "sessions" || panelName == "templates")
+		isFocused = (panelName == "sessions" || panelName == "templates" || panelName == "settings")
 	case FocusPreview:
 		isFocused = (panelName == "preview")
 	case FocusCommand:
@@ -471,6 +479,7 @@ func (m model) renderDynamicPanel(panelName string, width, height int, content [
 	titles := map[string]string{
 		"sessions":  "Sessions",
 		"templates": "Templates",
+		"settings":  "Settings",
 		"preview":   "Preview",
 		"command":   "Command",
 	}
@@ -482,45 +491,52 @@ func (m model) renderDynamicPanel(panelName string, width, height int, content [
 	compactTitles := map[string]string{
 		"sessions":  "Sess",
 		"templates": "Tmpl",
+		"settings":  "Set",
 		"preview":   "Prev",
 		"command":   "Cmd",
 	}
 	minimalTitles := map[string]string{
 		"sessions":  "S",
 		"templates": "T",
+		"settings":  "X",
 		"preview":   "P",
 		"command":   "C",
 	}
 
+	isTopTab := panelName == "sessions" || panelName == "templates" || panelName == "settings"
+
 	var title string
 	if isFocused {
-		// Special rendering for Sessions/Templates tabs (top panel)
-		if panelName == "sessions" || panelName == "templates" {
+		if isTopTab {
 			activeTabStyle := lipgloss.NewStyle().Foreground(colorPrimary).Bold(true)
 			inactiveTabStyle := lipgloss.NewStyle().Foreground(colorForeground)
 
-			var sessLabel, tmplLabel string
+			var sessLabel, tmplLabel, setLabel string
 			switch tier {
 			case "minimal":
-				sessLabel = "S"
-				tmplLabel = "T"
+				sessLabel, tmplLabel, setLabel = "S", "T", "X"
 			case "compact":
-				sessLabel = "Sess"
-				tmplLabel = "Tmpl"
+				sessLabel, tmplLabel, setLabel = "Sess", "Tmpl", "Set"
 			default:
-				sessLabel = "Sessions"
-				tmplLabel = "Templates"
+				sessLabel, tmplLabel, setLabel = "Sessions", "Templates", "Settings"
 			}
 
-			if panelName == "sessions" {
+			switch panelName {
+			case "sessions":
 				sessLabel = activeTabStyle.Render(sessLabel)
 				tmplLabel = inactiveTabStyle.Render(tmplLabel)
-			} else {
+				setLabel = inactiveTabStyle.Render(setLabel)
+			case "templates":
 				sessLabel = inactiveTabStyle.Render(sessLabel)
 				tmplLabel = activeTabStyle.Render(tmplLabel)
+				setLabel = inactiveTabStyle.Render(setLabel)
+			case "settings":
+				sessLabel = inactiveTabStyle.Render(sessLabel)
+				tmplLabel = inactiveTabStyle.Render(tmplLabel)
+				setLabel = activeTabStyle.Render(setLabel)
 			}
 
-			title = " " + sessLabel + "|" + tmplLabel + " ● "
+			title = " " + sessLabel + "|" + tmplLabel + "|" + setLabel + " ● "
 		} else {
 			// Other panels: simple focused indicator
 			switch tier {
@@ -533,15 +549,14 @@ func (m model) renderDynamicPanel(panelName string, width, height int, content [
 			}
 		}
 	} else {
-		// Unfocused: plain title
-		if panelName == "sessions" || panelName == "templates" {
+		if isTopTab {
 			switch tier {
 			case "minimal":
-				title = " S|T "
+				title = " S|T|X "
 			case "compact":
-				title = " Sess|Tmpl "
+				title = " Sess|Tmpl|Set "
 			default:
-				title = " Sessions | Templates "
+				title = " Sessions | Templates | Settings "
 			}
 		} else {
 			switch tier {
@@ -565,9 +580,9 @@ func (m model) renderDynamicPanel(panelName string, width, height int, content [
 	// Since title is now in border, we get full inner height for content
 	innerHeight := height - 2 // Remove borders
 
-	// Reserve 1 line for contextual help when focused (skip for sessions/templates to maximize list space)
+	// Reserve 1 line for contextual help when focused (skip for top tabs to maximize list space)
 	helpLine := ""
-	if isFocused && panelName != "sessions" && panelName != "templates" {
+	if isFocused && !isTopTab {
 		helpLine = m.getContextualPanelHelp(panelName)
 	}
 
@@ -580,9 +595,9 @@ func (m model) renderDynamicPanel(panelName string, width, height int, content [
 		availableContentLines = 1
 	}
 
-	// Determine scroll offset for sessions/templates panels
+	// Determine scroll offset for sessions/templates/settings panels
 	scrollOffset := 0
-	if panelName == "sessions" || panelName == "templates" {
+	if isTopTab {
 		scrollOffset = m.sessionsScrollOffset
 	}
 
@@ -640,9 +655,9 @@ func (m model) renderDynamicPanel(panelName string, width, height int, content [
 		lines = append(lines, line)
 	}
 
-	// Compute scroll info for sessions/templates panels (rendered in bottom border)
+	// Compute scroll info for top-tab panels (rendered in bottom border)
 	bottomBorderInfo := ""
-	if panelName == "sessions" || panelName == "templates" {
+	if isTopTab {
 		totalLines := len(content)
 		canScrollUp := scrollOffset > 0
 		canScrollDown := (startIdx + availableContentLines) < totalLines

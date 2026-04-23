@@ -52,10 +52,10 @@ func main() {
 	// Check if we have a TTY (required for TUI mode)
 	if !isTTY() {
 		fmt.Println("╔═══════════════════════════════════════════════════════════════╗")
-		fmt.Println("║  Tmuxplexer - Terminal UI Mode Requires a Real Terminal      ║")
+		fmt.Println("║  conductor-tui - Terminal UI Mode Requires a Real Terminal   ║")
 		fmt.Println("╚═══════════════════════════════════════════════════════════════╝")
 		fmt.Println()
-		fmt.Println("Error: No TTY detected. Tmuxplexer needs to run in a real terminal.")
+		fmt.Println("Error: No TTY detected. conductor-tui needs to run in a real terminal.")
 		fmt.Println()
 		fmt.Println("📋 How to run:")
 		fmt.Println("  1. Open Windows Terminal, iTerm2, or any terminal emulator")

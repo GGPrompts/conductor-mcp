@@ -84,11 +84,8 @@
 
 | Tool | Purpose |
 |------|---------|
-| `get_config()` | Get current configuration |
-| `set_config(...)` | Update settings (max_workers, default_dir, voice, delays) |
-| `add_profile(name, command, dir?)` | Add or update spawn profile |
-| `remove_profile(name)` | Delete spawn profile |
-| `list_profiles()` | Show all profiles with resolved dirs |
-| `list_voices()` | List TTS voices with assignments |
-| `test_voice(voice, text?)` | Test a TTS voice |
-| `reset_voice_assignments()` | Clear all voice assignments |
+| `get_config()` | Get current configuration (read-only) |
+
+User-facing settings — voice picker, profile CRUD, layout/timing — live in the conductor-tui Settings panel. Open conductor-tui (`Ctrl+b o` in tmux) and press `1` until the top panel cycles to the Settings tab.
+
+Canonical config: `~/.config/conductor/config.json` (shared by MCP server and TUI).

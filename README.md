@@ -72,11 +72,9 @@ A lightweight MCP server for orchestrating Claude Code workers from any terminal
 ### Configuration
 | Tool | Description |
 |------|-------------|
-| `get_config` | Get current conductor configuration |
-| `set_config` | Update configuration settings |
-| `list_voices` | List available TTS voices with assignments |
-| `test_voice` | Test a specific TTS voice |
-| `reset_voice_assignments` | Clear all worker voice assignments |
+| `get_config` | Get current conductor configuration (read-only) |
+
+User-facing settings (voices, profiles, layout/timing) are managed in the conductor-tui Settings panel. Canonical config: `~/.config/conductor/config.json`.
 
 ## The Key Differentiator
 

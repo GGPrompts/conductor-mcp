@@ -22,8 +22,15 @@ mcp = FastMCP("conductor")
 # Configuration
 STATE_DIR = Path("/tmp/claude-code-state")
 AUDIO_CACHE_DIR = Path("/tmp/conductor-audio-cache")
-CONFIG_DIR = Path.home() / ".config" / "conductor-mcp"
+
+# Canonical config path (cm-d64 decision)
+CONFIG_DIR = Path.home() / ".config" / "conductor"
 CONFIG_FILE = CONFIG_DIR / "config.json"
+
+# Legacy paths (read-once fallback on first run)
+LEGACY_MCP_CONFIG = Path.home() / ".config" / "conductor-mcp" / "config.json"
+LEGACY_TUI_CONFIG = Path.home() / ".config" / "conductor-tui" / "config.yaml"
+LEGACY_AUDIO_SHIM = Path.home() / ".claude" / "audio-config.sh"
 
 # Defaults (used in function signatures)
 DEFAULT_DELAY_MS = 800
@@ -82,8 +89,78 @@ DEFAULT_CONFIG = {
 }
 
 
+def _parse_audio_shim(path: Path) -> dict:
+    """Parse ~/.claude/audio-config.sh (simple VAR=value lines) for migration."""
+    result: dict = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export "):]
+                if "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                result[key] = value
+    except (OSError, IOError):
+        pass
+    return result
+
+
+def _migrate_legacy_configs() -> dict:
+    """
+    One-shot migrator for cm-d64 canonical config.
+
+    Merges from legacy paths:
+    - ~/.config/conductor-mcp/config.json -> mcp + audio + profiles sections
+    - ~/.config/conductor-tui/config.yaml -> tui section (best-effort)
+    - ~/.claude/audio-config.sh           -> audio section (VAR=value)
+
+    Returns merged config. Leaves legacy files in place.
+    """
+    merged = DEFAULT_CONFIG.copy()
+
+    # Legacy MCP config — pre-existing top-level shape (already matches current)
+    if LEGACY_MCP_CONFIG.exists():
+        try:
+            with open(LEGACY_MCP_CONFIG) as f:
+                legacy = json.load(f)
+            for k, v in legacy.items():
+                merged[k] = v
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Legacy audio shim (bash VAR=value) — overlay on voice/delay section
+    if LEGACY_AUDIO_SHIM.exists():
+        shim = _parse_audio_shim(LEGACY_AUDIO_SHIM)
+        if shim:
+            voice = merged.setdefault("voice", {})
+            if "VOICE" in shim:
+                voice["default"] = shim["VOICE"]
+            if "VOICE_RATE" in shim:
+                voice["rate"] = shim["VOICE_RATE"]
+            if "VOICE_PITCH" in shim:
+                voice["pitch"] = shim["VOICE_PITCH"]
+
+    # Legacy TUI YAML — best-effort, optional PyYAML
+    if LEGACY_TUI_CONFIG.exists():
+        try:
+            import yaml  # optional
+            with open(LEGACY_TUI_CONFIG) as f:
+                tui_legacy = yaml.safe_load(f) or {}
+            merged["tui"] = tui_legacy
+        except (ImportError, OSError, Exception):
+            pass
+
+    return merged
+
+
 def load_config() -> dict:
-    """Load config from file, creating default if needed."""
+    """Load config from canonical file. Migrate from legacy paths on first run."""
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE) as f:
@@ -95,7 +172,20 @@ def load_config() -> dict:
                 return config
         except (json.JSONDecodeError, IOError):
             pass
-    return DEFAULT_CONFIG.copy()
+
+    # Canonical absent — perform one-shot migration from legacy paths
+    merged = _migrate_legacy_configs()
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(merged, f, indent=2)
+        import sys
+        print(
+            f"conductor: migrated config to {CONFIG_FILE}",
+            file=sys.stderr,
+        )
+    except OSError:
+        pass
+    return merged
 
 
 def save_config(config: dict) -> None:
@@ -1346,7 +1436,7 @@ async def smart_spawn(
         project_dir: Path to the main project directory (falls back to profile dir or default_dir)
         session: Target tmux session (auto-detects if omitted)
         target_pane: Specific pane to split (auto-selects largest if omitted)
-        profile: Profile name from config (default: "claude"). See list_profiles().
+        profile: Profile name from config (default: "claude"). Managed in conductor-tui Settings.
         profile_cmd: Raw command override (backward compat, takes precedence over profile)
         inject_context: Whether to inject beads context (default: True)
 
@@ -1360,7 +1450,7 @@ async def smart_spawn(
     # Resolve project_dir — explicit > profile pinned dir > default_dir
     effective_dir = project_dir or resolved["dir"] or ""
     if not effective_dir:
-        return {"error": "No project_dir provided and no default_dir configured. Set with set_config(default_dir=...) or add_profile()."}
+        return {"error": "No project_dir provided and no default_dir configured. Edit ~/.config/conductor/config.json or use the conductor-tui Settings panel."}
 
     config = load_config()
     min_w = config.get("min_pane_width", 40)
@@ -1443,7 +1533,7 @@ async def smart_spawn_wave(
         issue_ids: Comma-separated beads issue IDs (e.g., "BD-abc,BD-def,BD-ghi")
         project_dir: Path to the main project directory (falls back to profile dir or default_dir)
         session: Target tmux session (auto-detects if omitted)
-        profile: Profile name from config (default: "claude"). See list_profiles().
+        profile: Profile name from config (default: "claude"). Managed in conductor-tui Settings.
         profile_cmd: Raw command override (backward compat, takes precedence over profile)
         inject_context: Whether to inject beads context (default: True)
 
@@ -2043,96 +2133,9 @@ def rebalance_panes(target: Optional[str] = None) -> str:
 # ═══════════════════════════════════════════════════════════════
 # PROFILE MANAGEMENT
 # ═══════════════════════════════════════════════════════════════
-
-@mcp.tool()
-def add_profile(
-    name: str,
-    command: str,
-    dir: Optional[str] = None
-) -> dict:
-    """
-    Add or update a spawn profile.
-
-    Profiles let you spawn workers with different CLI tools (claude, codex, gemini, tfe, etc.)
-    without remembering exact command strings.
-
-    Args:
-        name: Profile name (e.g., "codex", "gemini", "tfe")
-        command: Shell command to run (e.g., "codex", "gemini -i", "tfe")
-        dir: Pinned project directory for this profile (optional, overrides default_dir)
-
-    Returns:
-        Updated profile dict
-    """
-    config = load_config()
-    if "profiles" not in config:
-        config["profiles"] = {}
-
-    profile = {"command": command}
-    if dir:
-        profile["dir"] = dir
-
-    config["profiles"][name] = profile
-    save_config(config)
-
-    return {
-        "name": name,
-        "profile": profile,
-        "status": "created" if name not in config.get("profiles", {}) else "updated"
-    }
-
-
-@mcp.tool()
-def remove_profile(name: str) -> str:
-    """
-    Remove a spawn profile.
-
-    Args:
-        name: Profile name to remove
-
-    Returns:
-        Confirmation message
-    """
-    config = load_config()
-    profiles = config.get("profiles", {})
-
-    if name not in profiles:
-        return f"Profile '{name}' not found. Available: {', '.join(profiles.keys())}"
-
-    del profiles[name]
-    config["profiles"] = profiles
-    save_config(config)
-    return f"Removed profile: {name}"
-
-
-@mcp.tool()
-def list_profiles() -> dict:
-    """
-    List all spawn profiles with resolved directories.
-
-    Shows each profile's command and effective directory (pinned dir or default_dir fallback).
-
-    Returns:
-        Dict with profiles list and default_dir
-    """
-    config = load_config()
-    profiles = config.get("profiles", {})
-    default_dir = config.get("default_dir", "") or None
-
-    result = []
-    for name, profile in profiles.items():
-        result.append({
-            "name": name,
-            "command": profile["command"],
-            "pinned_dir": profile.get("dir"),
-            "effective_dir": profile.get("dir") or default_dir,
-        })
-
-    return {
-        "profiles": result,
-        "default_dir": default_dir,
-        "count": len(result),
-    }
+# User-facing profile CRUD moved to conductor-tui Settings panel (cm-3gw).
+# Claude orchestration code continues to consume profiles via resolve_profile()
+# reading the canonical config file.
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2154,111 +2157,12 @@ def get_config() -> dict:
     return load_config()
 
 
-@mcp.tool()
-def set_config(
-    max_concurrent_workers: Optional[int] = None,
-    default_layout: Optional[str] = None,
-    default_dir: Optional[str] = None,
-    default_voice: Optional[str] = None,
-    voice_rate: Optional[str] = None,
-    voice_pitch: Optional[str] = None,
-    random_voices: Optional[bool] = None,
-    send_keys_delay_ms: Optional[int] = None,
-    claude_boot_delay_s: Optional[int] = None
-) -> dict:
-    """
-    Update conductor configuration.
-
-    Args:
-        max_concurrent_workers: Max workers to spawn (default: 4)
-        default_layout: Default grid layout (default: "2x2")
-        default_dir: Global fallback project directory for profiles without a pinned dir
-        default_voice: Default TTS voice
-        voice_rate: Speech rate (e.g., "+0%", "+20%", "-10%")
-        voice_pitch: Voice pitch (e.g., "+0Hz", "+50Hz")
-        random_voices: Assign unique voices per worker (default: True)
-        send_keys_delay_ms: Delay before Enter key when submit=True (default: 800)
-        claude_boot_delay_s: Wait time for Claude to boot (default: 4)
-
-    Returns:
-        Updated config
-    """
-    config = load_config()
-
-    if max_concurrent_workers is not None:
-        config["max_concurrent_workers"] = max_concurrent_workers
-    if default_layout is not None:
-        config["default_layout"] = default_layout
-    if default_dir is not None:
-        config["default_dir"] = default_dir
-    if default_voice is not None:
-        config["voice"]["default"] = default_voice
-    if voice_rate is not None:
-        config["voice"]["rate"] = voice_rate
-    if voice_pitch is not None:
-        config["voice"]["pitch"] = voice_pitch
-    if random_voices is not None:
-        config["voice"]["random_per_worker"] = random_voices
-    if send_keys_delay_ms is not None:
-        config["delays"]["send_keys_ms"] = send_keys_delay_ms
-    if claude_boot_delay_s is not None:
-        config["delays"]["claude_boot_s"] = claude_boot_delay_s
-
-    save_config(config)
-    return config
-
-
-@mcp.tool()
-def list_voices() -> list[dict]:
-    """
-    List available TTS voices with current assignments.
-
-    Returns list of voices showing which are assigned to workers.
-    """
-    config = load_config()
-    assignments = config.get("worker_voice_assignments", {})
-
-    # Reverse mapping: voice -> worker
-    voice_to_worker = {v: k for k, v in assignments.items()}
-
-    voices = []
-    for voice in VOICE_POOL:
-        voices.append({
-            "voice": voice,
-            "assigned_to": voice_to_worker.get(voice),
-            "is_default": voice == config["voice"]["default"]
-        })
-
-    return voices
-
-
-@mcp.tool()
-async def test_voice(voice: str, text: str = "Hello, I am your conductor assistant.") -> str:
-    """
-    Test a specific TTS voice.
-
-    Args:
-        voice: Voice name from list_voices()
-        text: Text to speak (default: greeting)
-
-    Returns:
-        Confirmation
-    """
-    return await speak(text=text, voice=voice, blocking=True)
-
-
-@mcp.tool()
-def reset_voice_assignments() -> str:
-    """
-    Clear all worker voice assignments.
-
-    Use this to reset the voice pool when starting fresh.
-    """
-    config = load_config()
-    config["worker_voice_assignments"] = {}
-    config["voice_pool_index"] = 0
-    save_config(config)
-    return "Voice assignments cleared"
+# User-facing voice tools (list_voices, test_voice, reset_voice_assignments)
+# and the user-facing params of set_config (voice_rate, voice_pitch, default_voice,
+# random_voices, default_layout, default_dir, send_keys_delay_ms, claude_boot_delay_s)
+# have been moved to the conductor-tui Settings panel (cm-3gw).
+# set_config is removed entirely as Claude doesn't need to mutate config; orchestration
+# reads via get_config() and resolve_profile() instead.
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2368,66 +2272,19 @@ def prompt_announce(message: str) -> list[dict]:
 @mcp.prompt(
     name="options",
     title="Conductor Options",
-    description="View and adjust conductor settings (voices, delays, workers)"
+    description="Open the conductor-tui Settings panel to adjust voices, profiles, and timing"
 )
 def prompt_options() -> list[dict]:
     """Prompt to view and modify conductor settings."""
     return [
         {
             "role": "user",
-            "content": """Show conductor configuration and let me adjust settings.
+            "content": """Conductor settings live in the conductor-tui Settings panel.
 
-1. First, call get_config() to show current settings
-2. Call list_voices() to show available TTS voices and assignments
-3. Present the settings in a nice format:
+Open it with: Ctrl+b o (tmux popup), then press 1 until the top panel cycles to the Settings tab.
+From there you can pick voices, manage profiles, and tweak layout/timing.
 
-**Current Configuration**
-- Max workers: X
-- Default layout: XxX
-- Voice: [name] at [rate] speed
-- Random voices per worker: yes/no
-- Prompt delay: Xms
-- Boot delay: Xs
-
-**Voice Assignments**
-[table of voice -> worker]
-
-**Available Actions**
-- Change max workers
-- Change default voice
-- Adjust voice speed (+20%, -10%, etc.)
-- Toggle random voices
-- Test a voice
-- Reset voice assignments
-
-Ask me what I'd like to change, then use set_config() to apply changes.
-After changes, use speak() to confirm with "Settings updated"."""
-        }
-    ]
-
-
-@mcp.prompt(
-    name="test-voices",
-    title="Test TTS Voices",
-    description="Listen to and compare available TTS voices"
-)
-def prompt_test_voices() -> list[dict]:
-    """Prompt to test different TTS voices."""
-    return [
-        {
-            "role": "user",
-            "content": """Help me pick a TTS voice.
-
-1. Call list_voices() to see available voices
-2. For each voice category (US, UK, Australian), test one with test_voice()
-3. Use a short test phrase that shows personality
-4. After testing, ask which voice I'd like as default
-5. Update config with set_config(default_voice=...)
-
-Good test phrases:
-- "Worker one reporting for duty"
-- "Task complete, moving to next issue"
-- "Warning: context usage at 75 percent" """
+For a read-only peek at what the MCP server sees right now, call get_config()."""
         }
     ]
 
@@ -2446,9 +2303,10 @@ def prompt_kill_all() -> list[dict]:
 
 1. Call list_workers() to see active sessions
 2. For each worker, call kill_worker(session)
-3. Call reset_voice_assignments() to free up voices
-4. Announce "All workers terminated" with speak()
-5. Report how many workers were killed"""
+3. Announce "All workers terminated" with speak()
+4. Report how many workers were killed
+
+Note: voice assignments are managed by the user in the conductor-tui Settings panel."""
         }
     ]
 

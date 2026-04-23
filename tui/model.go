@@ -58,6 +58,11 @@ func initialModel(cfg Config, popupMode bool, watcherMode bool) model {
 		// Tab state initialization (default to sessions tab)
 		sessionsTab: "sessions",
 
+		// Settings tab initialization
+		settingsSection: settingsSectionVoice,
+		settingsCursor:  0,
+		settingsContent: []string{},
+
 		// Template and session data
 		templates:        templates,
 		sessions:         sessions,
@@ -118,6 +123,7 @@ func initialModel(cfg Config, popupMode bool, watcherMode bool) model {
 	m.updateSessionsContent()
 	m.updatePreviewContent()
 	m.updateCommandContent()
+	m.updateSettingsContent()
 	// Templates content updated on-demand when Templates tab is shown
 
 	// Set initial context-aware status message
@@ -137,6 +143,7 @@ func (m *model) setSize(width, height int) {
 	m.updatePreviewContent()
 	m.updateCommandContent()
 	m.updateTemplatesContent()
+	m.updateSettingsContent()
 }
 
 // calculateLayout computes layout dimensions based on config
@@ -736,6 +743,112 @@ func (m *model) updateTemplatesContent() {
 	}
 
 	m.templatesContent = lines
+}
+
+// updateSettingsContent updates the top panel with Settings UI (cm-3gw).
+// MVP covers Voice end-to-end; Profiles and Timing are listed as "coming soon".
+func (m *model) updateSettingsContent() {
+	var lines []string
+
+	lines = append(lines, "HEADER:Settings")
+	lines = append(lines, "")
+
+	// Section tabs row
+	sections := []struct {
+		key, label string
+	}{
+		{settingsSectionVoice, "Voice"},
+		{settingsSectionProfile, "Profiles"},
+		{settingsSectionTiming, "Timing"},
+	}
+	var tabs []string
+	for _, s := range sections {
+		if s.key == m.settingsSection {
+			tabs = append(tabs, "["+s.label+"]")
+		} else {
+			tabs = append(tabs, " "+s.label+" ")
+		}
+	}
+	lines = append(lines, "  "+strings.Join(tabs, "  "))
+	lines = append(lines, "DIVIDER")
+	lines = append(lines, "")
+
+	switch m.settingsSection {
+	case settingsSectionVoice:
+		current := settingsGetVoice()
+		rate := settingsGetVoiceRate()
+		pitch := settingsGetVoicePitch()
+
+		lines = append(lines, "DETAILS:header:Default voice")
+		lines = append(lines, "DETAILS:detail:current: "+current+"   rate: "+rate+"   pitch: "+pitch)
+		lines = append(lines, "")
+		lines = append(lines, "DETAILS:header:Pick a voice (Enter = save + preview, t = test only)")
+
+		for i, v := range voicePool {
+			marker := "  "
+			if i == m.settingsCursor {
+				marker = "► "
+			}
+			suffix := ""
+			if v == current {
+				suffix = "  (current)"
+			}
+			line := marker + v + suffix
+			if i == m.settingsCursor {
+				lines = append(lines, "SELECTED:"+line)
+			} else {
+				lines = append(lines, line)
+			}
+		}
+
+	case settingsSectionProfile:
+		lines = append(lines, "DETAILS:header:Profiles")
+		profiles := settingsListProfiles()
+		if len(profiles) == 0 {
+			lines = append(lines, "  (no profiles found in ~/.config/conductor/config.json)")
+		} else {
+			for _, p := range profiles {
+				lines = append(lines, "  - "+p)
+			}
+		}
+		lines = append(lines, "")
+		lines = append(lines, "DETAILS:detail:Profile CRUD from the TUI is planned — see cm-3gw follow-up.")
+		lines = append(lines, "DETAILS:detail:For now, edit ~/.config/conductor/config.json directly.")
+
+	case settingsSectionTiming:
+		root := loadCanonicalRoot()
+		layout := "2x2"
+		dir := "~"
+		sendKeys := 800
+		boot := 4
+		if s, ok := root["default_layout"].(string); ok && s != "" {
+			layout = s
+		}
+		if s, ok := root["default_dir"].(string); ok && s != "" {
+			dir = s
+		}
+		if d, ok := root["delays"].(map[string]interface{}); ok {
+			if v, ok := d["send_keys_ms"].(float64); ok {
+				sendKeys = int(v)
+			}
+			if v, ok := d["claude_boot_s"].(float64); ok {
+				boot = int(v)
+			}
+		}
+		lines = append(lines, "DETAILS:header:Layout & Timing")
+		lines = append(lines, fmt.Sprintf("DETAILS:detail:default_layout: %s", layout))
+		lines = append(lines, fmt.Sprintf("DETAILS:detail:default_dir:    %s", dir))
+		lines = append(lines, fmt.Sprintf("DETAILS:detail:send_keys_ms:   %d", sendKeys))
+		lines = append(lines, fmt.Sprintf("DETAILS:detail:claude_boot_s:  %d", boot))
+		lines = append(lines, "")
+		lines = append(lines, "DETAILS:detail:Editing from the TUI is planned — see cm-3gw follow-up.")
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, "DIVIDER")
+	lines = append(lines, "DETAILS:detail:[Tab] section  [↑↓] nav  [Enter] save + preview  [t] test only")
+
+	m.settingsContent = lines
 }
 
 // updateCommandContent updates the header panel with command input UI

@@ -11,7 +11,9 @@ MCP server providing orchestration tools for Claude Code workers.
 - **git** - For worktree management
 - **jq** - JSON reader for hook scripts (reads audio section from `~/.config/conductor/config.json`)
 
-## Tools (41 total)
+## Tools (34 total)
+
+User-facing configuration — voice, profiles, layout/timing — has moved to the conductor-tui Settings panel (cm-3gw). Open conductor-tui (`Ctrl+b o` in tmux, or run `conductor-tui`) and cycle the top panel with `1` until the Settings tab is active. Canonical config: `~/.config/conductor/config.json`.
 
 ### Core Worker Tools (9)
 
@@ -91,23 +93,13 @@ MCP server providing orchestration tools for Claude Code workers.
 | `apply_layout` | Apply layout (tiled, even-horizontal, etc.) |
 | `rebalance_panes` | Rebalance panes to equal sizes |
 
-### Profiles (3)
+### Configuration (1)
 
 | Tool | Purpose |
 |------|---------|
-| `add_profile` | Add/update a spawn profile (name, command, optional pinned dir) |
-| `remove_profile` | Delete a spawn profile |
-| `list_profiles` | List all profiles with resolved directories |
+| `get_config` | Get current conductor configuration (read-only) |
 
-### Configuration (5)
-
-| Tool | Purpose |
-|------|---------|
-| `get_config` | Get current conductor configuration |
-| `set_config` | Update settings (max_workers, default_dir, voice, delays) |
-| `list_voices` | List available TTS voices with assignments |
-| `test_voice` | Test a specific TTS voice |
-| `reset_voice_assignments` | Clear all worker voice assignments |
+Profile CRUD, voice picker/test/reset, and user-facing `set_config` params (voice_rate, voice_pitch, default_voice, random_voices, default_layout, default_dir, send_keys_delay_ms, claude_boot_delay_s) are managed by the user in the conductor-tui Settings panel.
 
 ## Default Profiles & Spawnable Tools
 

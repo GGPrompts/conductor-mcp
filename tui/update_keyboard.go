@@ -350,35 +350,125 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleSettingsKeys handles keys while the Settings tab is active in the top panel.
+// Keeps tab/focus keys flowing through to handleMainKeys' normal handling.
+func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
+	// Only intercept when settings tab is active and top panel is focused
+	if m.sessionsTab != "settings" || m.focusState != FocusSessions {
+		return m, nil, false
+	}
+
+	switch msg.String() {
+	case "tab":
+		// Cycle settings subsection: voice → profiles → timing → voice
+		switch m.settingsSection {
+		case settingsSectionVoice:
+			m.settingsSection = settingsSectionProfile
+		case settingsSectionProfile:
+			m.settingsSection = settingsSectionTiming
+		default:
+			m.settingsSection = settingsSectionVoice
+		}
+		m.settingsCursor = 0
+		m.updateSettingsContent()
+		m.statusMsg = "Settings: " + m.settingsSection
+		return m, nil, true
+
+	case "up", "k":
+		if m.settingsSection == settingsSectionVoice {
+			if m.settingsCursor > 0 {
+				m.settingsCursor--
+				m.updateSettingsContent()
+			}
+			return m, nil, true
+		}
+		// Non-voice sections: let navigation no-op rather than scroll away from settings
+		return m, nil, true
+
+	case "down", "j":
+		if m.settingsSection == settingsSectionVoice {
+			if m.settingsCursor < len(voicePool)-1 {
+				m.settingsCursor++
+				m.updateSettingsContent()
+			}
+			return m, nil, true
+		}
+		return m, nil, true
+
+	case "enter":
+		// Save selected voice + preview it
+		if m.settingsSection == settingsSectionVoice && m.settingsCursor >= 0 && m.settingsCursor < len(voicePool) {
+			voice := voicePool[m.settingsCursor]
+			if err := settingsSaveVoice(voice); err != nil {
+				m.statusMsg = "Failed to save voice: " + err.Error()
+			} else {
+				m.statusMsg = "Saved voice: " + voice + " (previewing...)"
+				go func() {
+					_ = testVoice(voice, settingsGetVoiceRate(), "")
+				}()
+			}
+			m.updateSettingsContent()
+		}
+		return m, nil, true
+
+	case "t":
+		// Test the voice under cursor without saving
+		if m.settingsSection == settingsSectionVoice && m.settingsCursor >= 0 && m.settingsCursor < len(voicePool) {
+			voice := voicePool[m.settingsCursor]
+			m.statusMsg = "Testing: " + voice
+			go func() {
+				_ = testVoice(voice, settingsGetVoiceRate(), "")
+			}()
+		}
+		return m, nil, true
+	}
+
+	return m, nil, false
+}
+
 // handleMainKeys handles keys in main view
 func (m model) handleMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Settings tab gets first dibs on navigation/action keys
+	if newM, cmd, handled := m.handleSettingsKeys(msg); handled {
+		return newM, cmd
+	}
+
 	switch msg.String() {
 
 	// Panel focus (1-3, top to bottom)
 	case "1":
-		// Focus sessions/templates panel (top)
-		// If already focused, toggle between Sessions and Templates tabs
+		// Focus sessions/templates/settings panel (top)
+		// If already focused, cycle Sessions → Templates → Settings → Sessions.
 		if m.focusState == FocusSessions {
-			// Already focused - toggle tab
-			if m.sessionsTab == "sessions" {
+			switch m.sessionsTab {
+			case "sessions":
 				m.sessionsTab = "templates"
 				m.statusMsg = "Tab: Templates"
-				m.sessionsScrollOffset = 0 // Reset scroll when switching tabs
+				m.sessionsScrollOffset = 0
 				m.updateTemplatesContent()
-				m.updatePreviewContent() // Update preview to show template details
-			} else {
+				m.updatePreviewContent()
+			case "templates":
+				m.sessionsTab = "settings"
+				m.statusMsg = "Tab: Settings"
+				m.sessionsScrollOffset = 0
+				m.updateSettingsContent()
+			default: // settings or anything else
 				m.sessionsTab = "sessions"
 				m.statusMsg = "Tab: Sessions"
-				m.sessionsScrollOffset = 0 // Reset scroll when switching tabs
+				m.sessionsScrollOffset = 0
 				m.updateSessionsContent()
-				m.updatePreviewContent() // Update preview to show session preview
+				m.updatePreviewContent()
 			}
 		} else {
 			// Not focused - focus the panel
 			m.focusState = FocusSessions
-			if m.sessionsTab == "templates" {
+			switch m.sessionsTab {
+			case "templates":
 				m.statusMsg = "Focus: Templates"
-			} else {
+			case "settings":
+				m.statusMsg = "Focus: Settings"
+				m.updateSettingsContent()
+			default:
 				m.statusMsg = "Focus: Sessions"
 			}
 		}

@@ -65,8 +65,13 @@ type model struct {
 	// Focus state for 3-panel layout
 	focusState int // Current focus: FocusSessions (0), FocusPreview (1), FocusCommand (2)
 
-	// Tab state for top panel (Sessions vs Templates)
-	sessionsTab string // "sessions" or "templates"
+	// Tab state for top panel (Sessions vs Templates vs Settings)
+	sessionsTab string // "sessions", "templates", or "settings"
+
+	// Settings panel state (top panel, Settings tab)
+	settingsSection string // "voice", "profiles", "timing"
+	settingsCursor  int    // Cursor within the current settings section
+	settingsContent []string
 
 	// Maximize mode - sessions panel takes over preview space
 	sessionsMaximized bool // When true, sessions panel uses full height (no preview)

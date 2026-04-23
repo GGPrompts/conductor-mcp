@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -173,6 +174,9 @@ func applyDefaults(cfg Config) Config {
 // TUI doesn't stomp MCP-owned state.
 func saveConfig(cfg Config) error {
 	configPath := getConfigPath()
+	if configPath == "" {
+		return fmt.Errorf("cannot determine config path: home directory unavailable")
+	}
 
 	// Create config directory if it doesn't exist
 	configDir := filepath.Dir(configPath)
@@ -194,7 +198,7 @@ func saveConfig(cfg Config) error {
 		return err
 	}
 
-	return os.WriteFile(configPath, data, 0644)
+	return os.WriteFile(configPath, data, 0600)
 }
 
 // loadCanonicalRoot returns the full canonical config as a generic map.
@@ -202,6 +206,12 @@ func saveConfig(cfg Config) error {
 // the TUI displays but doesn't parse into a typed struct.
 func loadCanonicalRoot() map[string]interface{} {
 	configPath := getConfigPath()
+	if configPath == "" {
+		// Home directory unavailable — avoid reading an arbitrary file from
+		// CWD by refusing to proceed. Callers treat an empty map as "no
+		// config yet", which is the safe fallback here.
+		return map[string]interface{}{}
+	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return map[string]interface{}{}
@@ -217,6 +227,9 @@ func loadCanonicalRoot() map[string]interface{} {
 // when mutating non-TUI sections.
 func saveCanonicalRoot(root map[string]interface{}) error {
 	configPath := getConfigPath()
+	if configPath == "" {
+		return fmt.Errorf("cannot determine config path: home directory unavailable")
+	}
 	configDir := filepath.Dir(configPath)
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return err
@@ -225,7 +238,7 @@ func saveCanonicalRoot(root map[string]interface{}) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath, data, 0644)
+	return os.WriteFile(configPath, data, 0600)
 }
 
 // getConfigPath returns the path to the canonical config file

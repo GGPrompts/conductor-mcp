@@ -152,11 +152,7 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle profile add / edit text entry + timing edit (cm-b6r). All four
 	// text-capture modes share the same keystroke handling — only the Enter
 	// behavior (and sometimes cancellation cleanup) differs.
-	if m.inputMode == "profile_add_name" ||
-		m.inputMode == "profile_edit_name" ||
-		m.inputMode == "profile_edit_command" ||
-		m.inputMode == "profile_edit_description" ||
-		m.inputMode == "timing_edit" {
+	if m.isSettingsTextEntry() {
 		switch msg.Type {
 		case tea.KeyEsc:
 			m.inputMode = ""
@@ -449,6 +445,12 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 //   14+N:         reset action row    (cursor 3+N)
 const voicePreambleLines = 7
 
+// voicePoolStart is the first cursor index for the voice pool in the Voice
+// section (after rate, pitch, random-per-worker rows). Kept as a single
+// constant so the four call sites (model.go renderer, voiceCursorLine, the
+// Enter handler, and the "t" test-only handler) stay in lockstep.
+const voicePoolStart = 3
+
 // voiceSectionCursorCount returns the total number of cursor positions in the
 // Voice section: rate + pitch + random + all voices + reset.
 func voiceSectionCursorCount() int {
@@ -461,10 +463,9 @@ func voiceSectionCursorCount() int {
 // this helper handles the offsets.
 func voiceCursorLine(cursor int) int {
 	const gap = 2 // blank + DETAILS:header
-	poolStart := 3
-	resetCursor := poolStart + len(voicePool)
+	resetCursor := voicePoolStart + len(voicePool)
 	switch {
-	case cursor < poolStart:
+	case cursor < voicePoolStart:
 		return voicePreambleLines + cursor
 	case cursor < resetCursor:
 		return voicePreambleLines + cursor + gap
@@ -607,9 +608,8 @@ func (m model) handleSettingsInputEnter() (tea.Model, tea.Cmd) {
 	switch m.inputMode {
 	case "profile_add_name":
 		name := strings.TrimSpace(m.inputBuffer)
-		m.inputMode = ""
-		m.inputBuffer = ""
-		m.inputPrompt = ""
+		// Validate BEFORE clearing input mode so the user stays in the modal
+		// on rejection and can fix the input (mirrors profile_edit_name).
 		if name == "" {
 			m.statusMsg = "Profile name cannot be empty"
 			return m, nil
@@ -619,6 +619,10 @@ func (m model) handleSettingsInputEnter() (tea.Model, tea.Cmd) {
 			m.statusMsg = "Profile already exists: " + name
 			return m, nil
 		}
+		// Validation passed — now exit the modal.
+		m.inputMode = ""
+		m.inputBuffer = ""
+		m.inputPrompt = ""
 		if err := settingsSaveProfile(name, "", ""); err != nil {
 			m.statusMsg = "Failed to create profile: " + err.Error()
 			return m, nil
@@ -728,6 +732,46 @@ func contains(sl []string, s string) bool {
 	return false
 }
 
+// isSettingsTextEntry reports whether the current inputMode is one of the
+// Settings panel's five text-capture modes. Shared between the keyboard
+// dispatcher (update_keyboard.go) and the status-bar renderer (view.go) so
+// the two stay in sync.
+func (m model) isSettingsTextEntry() bool {
+	switch m.inputMode {
+	case "profile_add_name",
+		"profile_edit_name",
+		"profile_edit_command",
+		"profile_edit_description",
+		"timing_edit":
+		return true
+	}
+	return false
+}
+
+// adjustVoiceRatePitch is the shared left/right handler for the rate (cursor
+// 0) and pitch (cursor 1) rows in the Voice section. delta is signed — +5
+// for right/"l", -5 for left/"h". Other cursor positions are a no-op.
+func (m *model) adjustVoiceRatePitch(delta int) {
+	switch m.settingsCursor {
+	case 0: // rate
+		newRate := adjustVoiceRatePercent(settingsGetVoiceRate(), delta)
+		if err := settingsSaveVoiceRate(newRate); err != nil {
+			m.statusMsg = "Failed to save rate: " + err.Error()
+		} else {
+			m.statusMsg = "Rate: " + newRate
+		}
+		m.updateSettingsContent()
+	case 1: // pitch
+		newPitch := adjustVoicePitchHz(settingsGetVoicePitch(), delta)
+		if err := settingsSaveVoicePitch(newPitch); err != nil {
+			m.statusMsg = "Failed to save pitch: " + err.Error()
+		} else {
+			m.statusMsg = "Pitch: " + newPitch
+		}
+		m.updateSettingsContent()
+	}
+}
+
 // handleSettingsKeys handles keys while the Settings tab is active in the top panel.
 // Keeps tab/focus keys flowing through to handleMainKeys' normal handling.
 func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
@@ -774,24 +818,7 @@ func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		// Left adjusts rate/pitch in the Voice section. On other rows it's a
 		// no-op (swallowed so the outer panel nav doesn't take over).
 		if m.settingsSection == settingsSectionVoice {
-			switch m.settingsCursor {
-			case 0: // rate
-				newRate := adjustVoiceRatePercent(settingsGetVoiceRate(), -5)
-				if err := settingsSaveVoiceRate(newRate); err != nil {
-					m.statusMsg = "Failed to save rate: " + err.Error()
-				} else {
-					m.statusMsg = "Rate: " + newRate
-				}
-				m.updateSettingsContent()
-			case 1: // pitch
-				newPitch := adjustVoicePitchHz(settingsGetVoicePitch(), -5)
-				if err := settingsSaveVoicePitch(newPitch); err != nil {
-					m.statusMsg = "Failed to save pitch: " + err.Error()
-				} else {
-					m.statusMsg = "Pitch: " + newPitch
-				}
-				m.updateSettingsContent()
-			}
+			m.adjustVoiceRatePitch(-5)
 			return m, nil, true
 		}
 		return m, nil, false
@@ -799,24 +826,7 @@ func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	case "right", "l":
 		// Right adjusts rate/pitch in the Voice section. No-op elsewhere.
 		if m.settingsSection == settingsSectionVoice {
-			switch m.settingsCursor {
-			case 0: // rate
-				newRate := adjustVoiceRatePercent(settingsGetVoiceRate(), 5)
-				if err := settingsSaveVoiceRate(newRate); err != nil {
-					m.statusMsg = "Failed to save rate: " + err.Error()
-				} else {
-					m.statusMsg = "Rate: " + newRate
-				}
-				m.updateSettingsContent()
-			case 1: // pitch
-				newPitch := adjustVoicePitchHz(settingsGetVoicePitch(), 5)
-				if err := settingsSaveVoicePitch(newPitch); err != nil {
-					m.statusMsg = "Failed to save pitch: " + err.Error()
-				} else {
-					m.statusMsg = "Pitch: " + newPitch
-				}
-				m.updateSettingsContent()
-			}
+			m.adjustVoiceRatePitch(5)
 			return m, nil, true
 		}
 		return m, nil, false
@@ -870,10 +880,10 @@ func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 
 	case "enter":
+		var outCmd tea.Cmd
 		switch m.settingsSection {
 		case settingsSectionVoice:
-			poolStart := 3
-			resetCursor := poolStart + len(voicePool)
+			resetCursor := voicePoolStart + len(voicePool)
 			switch {
 			case m.settingsCursor == 0 || m.settingsCursor == 1:
 				// Rate/pitch rows: preview the current default voice with the
@@ -881,19 +891,15 @@ func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 				// left/right, so Enter is a convenience "hear it now".
 				voice := settingsGetVoice()
 				m.statusMsg = "Preview: " + voice + " (rate " + settingsGetVoiceRate() + ", pitch " + settingsGetVoicePitch() + ")"
-				go func() {
-					_ = testVoice(voice, settingsGetVoiceRate(), "")
-				}()
-			case m.settingsCursor >= poolStart && m.settingsCursor < resetCursor:
+				outCmd = testVoiceCmd(voice, settingsGetVoiceRate(), "")
+			case m.settingsCursor >= voicePoolStart && m.settingsCursor < resetCursor:
 				// Save selected voice + preview it
-				voice := voicePool[m.settingsCursor-poolStart]
+				voice := voicePool[m.settingsCursor-voicePoolStart]
 				if err := settingsSaveVoice(voice); err != nil {
 					m.statusMsg = "Failed to save voice: " + err.Error()
 				} else {
 					m.statusMsg = "Saved voice: " + voice + " (previewing...)"
-					go func() {
-						_ = testVoice(voice, settingsGetVoiceRate(), "")
-					}()
+					outCmd = testVoiceCmd(voice, settingsGetVoiceRate(), "")
 				}
 				m.updateSettingsContent()
 			case m.settingsCursor == resetCursor:
@@ -929,23 +935,20 @@ func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 				m.inputMode = "timing_edit"
 				m.timingEditField = field
 				m.inputBuffer = timingFieldValueStr(field)
-				m.inputPrompt = fmt.Sprintf("Edit %s: ", timingFieldLabel(field))
+				m.inputPrompt = fmt.Sprintf("Edit %s: ", m.timingEditField)
 				m.statusMsg = "Enter new value (ESC to cancel)"
 			}
 		}
-		return m, nil, true
+		return m, outCmd, true
 
 	case "t":
 		// Test the voice under cursor without saving
 		if m.settingsSection == settingsSectionVoice {
-			poolStart := 3
-			idx := m.settingsCursor - poolStart
+			idx := m.settingsCursor - voicePoolStart
 			if idx >= 0 && idx < len(voicePool) {
 				voice := voicePool[idx]
 				m.statusMsg = "Testing: " + voice
-				go func() {
-					_ = testVoice(voice, settingsGetVoiceRate(), "")
-				}()
+				return m, testVoiceCmd(voice, settingsGetVoiceRate(), ""), true
 			}
 		}
 		return m, nil, true

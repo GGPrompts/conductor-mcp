@@ -113,11 +113,7 @@ func (m model) renderStatusBar() string {
 		line1 = m.getSessionSavePrompt() + m.inputBuffer + "█"
 	} else if m.inputMode == "rename" {
 		line1 = m.inputPrompt + m.inputBuffer + "█" // Show cursor
-	} else if m.inputMode == "profile_add_name" ||
-		m.inputMode == "profile_edit_name" ||
-		m.inputMode == "profile_edit_command" ||
-		m.inputMode == "profile_edit_description" ||
-		m.inputMode == "timing_edit" {
+	} else if m.isSettingsTextEntry() {
 		// Settings text-entry modes (cm-b6r).
 		line1 = m.inputPrompt + m.inputBuffer + "█"
 	} else if m.inputMode == "profile_delete_confirm" {

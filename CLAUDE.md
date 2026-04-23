@@ -99,7 +99,7 @@ User-facing configuration — voice, profiles, layout/timing — has moved to th
 |------|---------|
 | `get_config` | Get current conductor configuration (read-only) |
 
-Profile CRUD, voice picker/test/reset, and user-facing `set_config` params (voice_rate, voice_pitch, default_voice, random_voices, default_layout, default_dir, send_keys_delay_ms, claude_boot_delay_s) are managed by the user in the conductor-tui Settings panel. The Settings panel supports full Profile CRUD (add/edit/delete) and Timing editing (default_layout, default_dir, send_keys_ms, claude_boot_s) in addition to the Voice picker.
+Profile CRUD, voice picker/test/reset, and user-facing `set_config` params (voice_rate, voice_pitch, default_voice, random_voices, default_layout, default_dir, send_keys_ms, claude_boot_s) are managed by the user in the conductor-tui Settings panel. The Settings panel supports full Profile CRUD (add/edit/delete) and Timing editing (default_layout, default_dir, send_keys_ms, claude_boot_s) in addition to the Voice picker.
 
 ## Default Profiles & Spawnable Tools
 

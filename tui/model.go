@@ -792,8 +792,10 @@ func (m *model) updateSettingsContent() {
 		rateCursor := 0
 		pitchCursor := 1
 		randomCursor := 2
-		poolStart := 3
-		resetCursor := poolStart + len(voicePool)
+		// Use the shared voicePoolStart const (update_keyboard.go) so all
+		// four call sites — this renderer, voiceCursorLine, the Enter
+		// handler, and the "t" test-only handler — stay in lockstep.
+		resetCursor := voicePoolStart + len(voicePool)
 
 		lines = append(lines, "DETAILS:header:Default voice")
 		lines = append(lines, "DETAILS:detail:current: "+current)
@@ -832,7 +834,7 @@ func (m *model) updateSettingsContent() {
 		lines = append(lines, "DETAILS:header:Pick a voice  (Enter = save + preview, t = test only)")
 
 		for i, v := range voicePool {
-			cursorIdx := poolStart + i
+			cursorIdx := voicePoolStart + i
 			selected := m.settingsCursor == cursorIdx
 			suffix := ""
 			if v == current {
@@ -899,7 +901,7 @@ func (m *model) updateSettingsContent() {
 		for i, field := range timingFieldOrder {
 			val := timingFieldValueStr(field)
 			selected := m.settingsCursor == i
-			row := fmt.Sprintf("%s%-16s %s", cursorMarker(selected), timingFieldLabel(field)+":", val)
+			row := fmt.Sprintf("%s%-16s %s", cursorMarker(selected), field+":", val)
 			if selected {
 				lines = append(lines, "SELECTED:"+row)
 			} else {

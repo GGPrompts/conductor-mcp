@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"sort"
@@ -107,10 +108,10 @@ func settingsGetRandomPerWorker() bool {
 	return true
 }
 
-// settingsSaveVoice persists the default voice to the canonical config.
-// Writes under "voice" to match the current MCP server schema; a future
-// cm-2k1 iteration may rename to "audio" per cm-d64's final schema.
-func settingsSaveVoice(voice string) error {
+// saveVoiceKey is the shared load-mutate-save helper for the root["voice"]
+// section. All settingsSaveVoice* callers delegate here so there's one place
+// to update if the schema shifts (cm-d64, cm-06j).
+func saveVoiceKey(key string, value interface{}) error {
 	root := loadCanonicalRoot()
 	if root == nil {
 		root = map[string]interface{}{}
@@ -119,58 +120,35 @@ func settingsSaveVoice(voice string) error {
 	if v == nil {
 		v = map[string]interface{}{}
 	}
-	v["default"] = voice
+	v[key] = value
 	root["voice"] = v
 	return saveCanonicalRoot(root)
+}
+
+// settingsSaveVoice persists the default voice to the canonical config.
+// Writes under "voice" to match the current MCP server schema; a future
+// cm-2k1 iteration may rename to "audio" per cm-d64's final schema.
+func settingsSaveVoice(voice string) error {
+	return saveVoiceKey("default", voice)
 }
 
 // settingsSaveVoiceRate persists voice.rate to the canonical config. The value
 // should be a string in edge-tts' expected "+XX%" / "-XX%" form (cm-06j).
 func settingsSaveVoiceRate(rate string) error {
-	root := loadCanonicalRoot()
-	if root == nil {
-		root = map[string]interface{}{}
-	}
-	v, _ := root["voice"].(map[string]interface{})
-	if v == nil {
-		v = map[string]interface{}{}
-	}
-	v["rate"] = rate
-	root["voice"] = v
-	return saveCanonicalRoot(root)
+	return saveVoiceKey("rate", rate)
 }
 
 // settingsSaveVoicePitch persists voice.pitch to the canonical config. The
 // value should be in edge-tts' "+YYHz" / "-YYHz" form (cm-06j).
 func settingsSaveVoicePitch(pitch string) error {
-	root := loadCanonicalRoot()
-	if root == nil {
-		root = map[string]interface{}{}
-	}
-	v, _ := root["voice"].(map[string]interface{})
-	if v == nil {
-		v = map[string]interface{}{}
-	}
-	v["pitch"] = pitch
-	root["voice"] = v
-	return saveCanonicalRoot(root)
+	return saveVoiceKey("pitch", pitch)
 }
 
 // settingsSaveRandomPerWorker persists voice.random_per_worker. Keeps the
 // current key name — do not reintroduce the legacy "random_voices" key
 // (cm-06j, cm-3gw).
 func settingsSaveRandomPerWorker(val bool) error {
-	root := loadCanonicalRoot()
-	if root == nil {
-		root = map[string]interface{}{}
-	}
-	v, _ := root["voice"].(map[string]interface{})
-	if v == nil {
-		v = map[string]interface{}{}
-	}
-	v["random_per_worker"] = val
-	root["voice"] = v
-	return saveCanonicalRoot(root)
+	return saveVoiceKey("random_per_worker", val)
 }
 
 // settingsResetVoiceAssignments clears the worker_voice_assignments map and
@@ -276,8 +254,16 @@ func testVoice(voice, rate, text string) error {
 	if rate == "" {
 		rate = "+20%"
 	}
-	// Write to a temp mp3 so mpv has a concrete file.
-	tmp := fmt.Sprintf("/tmp/conductor-tui-voice-test-%d.mp3", 0)
+	// Write to a unique temp mp3 so mpv has a concrete file. Using
+	// os.CreateTemp avoids a predictable-path symlink attack and prevents
+	// concurrent-call collisions between overlapping previews.
+	f, err := os.CreateTemp("", "conductor-tui-voice-test-*.mp3")
+	if err != nil {
+		return fmt.Errorf("create temp file: %v", err)
+	}
+	tmp := f.Name()
+	_ = f.Close()
+	defer os.Remove(tmp)
 
 	// Generate audio
 	gen := exec.Command(
@@ -505,21 +491,6 @@ var timingFieldOrder = []string{
 	"default_dir",
 	"send_keys_ms",
 	"claude_boot_s",
-}
-
-// timingFieldLabel returns the short label used in the Settings panel.
-func timingFieldLabel(field string) string {
-	switch field {
-	case "default_layout":
-		return "default_layout"
-	case "default_dir":
-		return "default_dir"
-	case "send_keys_ms":
-		return "send_keys_ms"
-	case "claude_boot_s":
-		return "claude_boot_s"
-	}
-	return field
 }
 
 // timingFieldValueStr returns the current field value as a display string.

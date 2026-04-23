@@ -299,6 +299,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = "Session extracted - enter template name"
 		return m, nil
 
+	case voiceTestResultMsg:
+		// Surface the async voice preview outcome in the status bar. Previous
+		// code swallowed this with `go func(){ _ = testVoice(...) }()`.
+		if msg.err != nil {
+			m.statusMsg = "Voice test failed (" + msg.voice + "): " + msg.err.Error()
+		}
+		// Success leaves the existing "Preview:"/"Saved voice:"/"Testing:"
+		// status intact — no need to overwrite it.
+		return m, nil
+
 	case tickMsg:
 		// Auto-refresh sessions every 2 seconds
 		// Preserve the currently selected item
@@ -372,4 +382,14 @@ func footerTick() tea.Cmd {
 	return tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg {
 		return footerTickMsg{}
 	})
+}
+
+// testVoiceCmd runs testVoice in a goroutine-safe tea.Cmd and returns a
+// voiceTestResultMsg back through the Update loop. Replaces the earlier
+// fire-and-forget `go func(){ _ = testVoice(...) }()` pattern so TTS
+// failures surface to the user in the status bar instead of disappearing.
+func testVoiceCmd(voice, rate, text string) tea.Cmd {
+	return func() tea.Msg {
+		return voiceTestResultMsg{voice: voice, err: testVoice(voice, rate, text)}
+	}
 }

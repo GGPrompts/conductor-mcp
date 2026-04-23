@@ -199,6 +199,15 @@ type statusMsg struct {
 	message string
 }
 
+// voiceTestResultMsg delivers the outcome of an asynchronous testVoice
+// invocation back to the Bubble Tea Update loop. It's the Bubble-Tea-safe
+// replacement for the earlier `go func(){ _ = testVoice(...) }()` pattern
+// that silently swallowed errors.
+type voiceTestResultMsg struct {
+	voice string
+	err   error
+}
+
 type resizeMsg struct {
 	width  int
 	height int

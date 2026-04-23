@@ -350,6 +350,72 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// voicePreambleLines is the number of content lines rendered before the
+// voicePool list in the Voice section of Settings. It must stay in sync with
+// updateSettingsContent (model.go); breaking this invariant causes the ►
+// cursor to scroll off-screen (cm-cjk).
+//
+// Layout (indices in m.settingsContent):
+//   0: tabs row (Voice | Profiles | Timing)
+//   1: DIVIDER
+//   2: blank
+//   3: DETAILS:header:Default voice
+//   4: DETAILS:detail:current/rate/pitch
+//   5: blank
+//   6: DETAILS:header:Pick a voice ...
+//   7+: voicePool entries
+const voicePreambleLines = 7
+
+// settingsViewportSize returns the number of content rows visible inside the
+// Settings panel (innerHeight; top-tab panels have no reserved help line).
+func (m model) settingsViewportSize() int {
+	_, contentHeight := m.calculateLayout()
+	contentHeight += 2 // Add back for panel height calc (matches pageUp/pageDown)
+	sessionsHeight, _, _ := m.calculateAdaptivePanelHeights(contentHeight)
+	viewport := sessionsHeight - 2 // -2 for top/bottom borders
+	if viewport < 1 {
+		viewport = 1
+	}
+	return viewport
+}
+
+// clampSettingsScrollOffset ensures sessionsScrollOffset stays within
+// [0, maxOffset] given the current settingsContent size and viewport.
+func (m *model) clampSettingsScrollOffset() {
+	viewport := m.settingsViewportSize()
+	total := len(m.settingsContent)
+	maxOffset := total - viewport
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.sessionsScrollOffset < 0 {
+		m.sessionsScrollOffset = 0
+	}
+	if m.sessionsScrollOffset > maxOffset {
+		m.sessionsScrollOffset = maxOffset
+	}
+}
+
+// adjustSettingsScrollToCursor keeps the Voice-section cursor (settingsCursor)
+// visible inside the viewport by nudging sessionsScrollOffset.
+func (m *model) adjustSettingsScrollToCursor() {
+	if m.settingsSection != settingsSectionVoice {
+		return
+	}
+	viewport := m.settingsViewportSize()
+	cursorLine := voicePreambleLines + m.settingsCursor
+
+	// Scrolled past cursor above viewport: scroll up.
+	if cursorLine < m.sessionsScrollOffset {
+		m.sessionsScrollOffset = cursorLine
+	}
+	// Cursor fell below viewport: scroll down.
+	if cursorLine >= m.sessionsScrollOffset+viewport {
+		m.sessionsScrollOffset = cursorLine - viewport + 1
+	}
+	m.clampSettingsScrollOffset()
+}
+
 // handleSettingsKeys handles keys while the Settings tab is active in the top panel.
 // Keeps tab/focus keys flowing through to handleMainKeys' normal handling.
 func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
@@ -370,6 +436,7 @@ func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			m.settingsSection = settingsSectionVoice
 		}
 		m.settingsCursor = 0
+		m.sessionsScrollOffset = 0 // Reset scroll when switching sections
 		m.updateSettingsContent()
 		m.statusMsg = "Settings: " + m.settingsSection
 		return m, nil, true
@@ -379,10 +446,15 @@ func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			if m.settingsCursor > 0 {
 				m.settingsCursor--
 				m.updateSettingsContent()
+				m.adjustSettingsScrollToCursor()
 			}
 			return m, nil, true
 		}
-		// Non-voice sections: let navigation no-op rather than scroll away from settings
+		// Non-voice sections have no cursor: drive scroll directly.
+		if m.sessionsScrollOffset > 0 {
+			m.sessionsScrollOffset--
+			m.clampSettingsScrollOffset()
+		}
 		return m, nil, true
 
 	case "down", "j":
@@ -390,8 +462,41 @@ func (m model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			if m.settingsCursor < len(voicePool)-1 {
 				m.settingsCursor++
 				m.updateSettingsContent()
+				m.adjustSettingsScrollToCursor()
 			}
 			return m, nil, true
+		}
+		// Non-voice sections have no cursor: drive scroll directly.
+		m.sessionsScrollOffset++
+		m.clampSettingsScrollOffset()
+		return m, nil, true
+
+	case "pgup":
+		viewport := m.settingsViewportSize()
+		m.sessionsScrollOffset -= viewport
+		m.clampSettingsScrollOffset()
+		if m.settingsSection == settingsSectionVoice {
+			// Pull cursor with the viewport so it stays visible.
+			m.settingsCursor -= viewport
+			if m.settingsCursor < 0 {
+				m.settingsCursor = 0
+			}
+			m.updateSettingsContent()
+			m.adjustSettingsScrollToCursor()
+		}
+		return m, nil, true
+
+	case "pgdown":
+		viewport := m.settingsViewportSize()
+		m.sessionsScrollOffset += viewport
+		m.clampSettingsScrollOffset()
+		if m.settingsSection == settingsSectionVoice {
+			m.settingsCursor += viewport
+			if m.settingsCursor > len(voicePool)-1 {
+				m.settingsCursor = len(voicePool) - 1
+			}
+			m.updateSettingsContent()
+			m.adjustSettingsScrollToCursor()
 		}
 		return m, nil, true
 

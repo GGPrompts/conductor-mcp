@@ -750,8 +750,9 @@ func (m *model) updateTemplatesContent() {
 func (m *model) updateSettingsContent() {
 	var lines []string
 
-	lines = append(lines, "HEADER:Settings")
-	lines = append(lines, "")
+	// NOTE: No top-level "Settings" header line here; the panel's own border
+	// title already renders the active tab (Sessions|Templates|Settings), so an
+	// inner HEADER would duplicate it and push content off-screen (cm-cjk).
 
 	// Section tabs row
 	sections := []struct {

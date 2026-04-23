@@ -49,6 +49,16 @@ SHARED_SURFACE: list[str] = [
     "focus_pane",
     "show_popup",
     "show_status_popup",
+    # cm-aax.6: layout / pane / session verbs.
+    "split_pane",
+    "create_grid",
+    "spawn_worker_in_pane",
+    "create_session",
+    "create_window",
+    "resize_pane",
+    "zoom_pane",
+    "apply_layout",
+    "rebalance_panes",
 ]
 
 # MCP name -> CLI path (space-separated). Missing entries mean the CLI
@@ -62,6 +72,16 @@ CLI_PATH_MAP: dict[str, str] = {
     "focus_pane": "focus",
     "show_popup": "popup show",
     "show_status_popup": "popup status",
+    # cm-aax.6: layout / pane / session verbs.
+    "split_pane": "split",
+    "create_grid": "grid",
+    "spawn_worker_in_pane": "spawn in-pane",
+    "create_session": "session new",
+    "create_window": "window new",
+    "resize_pane": "resize",
+    "zoom_pane": "zoom",
+    "apply_layout": "layout apply",
+    "rebalance_panes": "layout rebalance",
 }
 
 

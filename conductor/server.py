@@ -26,17 +26,26 @@ from conductor.core import (
     _find_best_split,
     _get_context_from_state_files,
     _get_context_from_terminal,
+    apply_layout_impl,
+    create_grid_impl,
+    create_session_impl,
+    create_window_impl,
     focus_pane_impl,
     get_worker_voice,
     kill_pane_impl,
     kill_worker_impl,
     list_panes_core,
     load_config,
+    rebalance_panes_impl,
+    resize_pane_impl,
     resolve_profile,
     send_keys_impl,
     show_popup_impl,
     show_status_popup_impl,
+    spawn_worker_in_pane_impl,
     speak_impl,
+    split_pane_impl,
+    zoom_pane_impl,
 )
 from conductor.protocol import (
     ContextPercent,
@@ -546,31 +555,12 @@ def create_session(
     Returns:
         Dict with session info
     """
-    args = ["tmux", "new-session", "-s", name, "-P",
-            "-F", "#{session_id}|#{window_id}|#{pane_id}"]
-
-    if not attach:
-        args.append("-d")  # Detached
-
-    if start_dir:
-        args.extend(["-c", start_dir])
-
-    if command:
-        args.append(command)
-
-    result = subprocess.run(args, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        return {"error": result.stderr.strip()}
-
-    parts = result.stdout.strip().split("|")
-    return {
-        "session": name,
-        "session_id": parts[0] if len(parts) > 0 else None,
-        "window_id": parts[1] if len(parts) > 1 else None,
-        "pane_id": parts[2] if len(parts) > 2 else None,
-        "attached": attach
-    }
+    return create_session_impl(
+        name,
+        start_dir=start_dir,
+        command=command,
+        attach=attach,
+    )
 
 
 @mcp.tool()
@@ -592,31 +582,12 @@ def create_window(
     Returns:
         Dict with window info
     """
-    args = ["tmux", "new-window", "-t", f"{session}:", "-a", "-P",
-            "-F", "#{window_id}|#{window_index}|#{pane_id}"]
-
-    if name:
-        args.extend(["-n", name])
-
-    if start_dir:
-        args.extend(["-c", start_dir])
-
-    if command:
-        args.append(command)
-
-    result = subprocess.run(args, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        return {"error": result.stderr.strip()}
-
-    parts = result.stdout.strip().split("|")
-    return {
-        "session": session,
-        "window_id": parts[0] if len(parts) > 0 else None,
-        "window_index": int(parts[1]) if len(parts) > 1 else None,
-        "pane_id": parts[2] if len(parts) > 2 else None,
-        "name": name
-    }
+    return create_window_impl(
+        session,
+        name=name,
+        start_dir=start_dir,
+        command=command,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -642,40 +613,12 @@ def split_pane(
     Returns:
         Dict with new pane info
     """
-    args = ["tmux", "split-window"]
-
-    # Direction flag
-    if direction == "horizontal":
-        args.append("-h")  # -h = horizontal split (side by side)
-    else:
-        args.append("-v")  # -v = vertical split (stacked)
-
-    # Target pane
-    if target:
-        args.extend(["-t", target])
-
-    # Working directory
-    if start_dir:
-        args.extend(["-c", start_dir])
-
-    # Percentage (use -l with percentage calculation based on current size)
-    # Note: -p flag has issues in some tmux versions, so we use default 50% split
-    # by omitting size flags entirely (tmux defaults to even split)
-
-    # Print new pane info
-    args.extend(["-P", "-F", "#{pane_id}|#{pane_index}|#{pane_width}x#{pane_height}"])
-
-    result = subprocess.run(args, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        return {"error": result.stderr.strip()}
-
-    parts = result.stdout.strip().split("|")
-    return {
-        "pane_id": parts[0] if len(parts) > 0 else None,
-        "pane_index": int(parts[1]) if len(parts) > 1 else None,
-        "size": parts[2] if len(parts) > 2 else None
-    }
+    return split_pane_impl(
+        direction=direction,
+        target=target,
+        percentage=percentage,
+        start_dir=start_dir,
+    )
 
 
 @mcp.tool()
@@ -698,83 +641,11 @@ def create_grid(
     Returns:
         Dict with pane IDs in grid order (left-to-right, top-to-bottom)
     """
-    try:
-        cols, rows = map(int, layout.lower().split("x"))
-    except ValueError:
-        return {"error": f"Invalid layout format: {layout}. Use COLSxROWS (e.g., 2x2)"}
-
-    total_panes = cols * rows
-    if total_panes < 1 or total_panes > 16:
-        return {"error": "Layout must create 1-16 panes"}
-
-    # Get current pane as starting point
-    target = f"{session}:" if session else ""
-
-    result = subprocess.run(
-        ["tmux", "display-message", "-t", target or ".", "-p", "#{pane_id}"],
-        capture_output=True, text=True
+    return create_grid_impl(
+        layout=layout,
+        session=session,
+        start_dir=start_dir,
     )
-    if result.returncode != 0:
-        return {"error": "Could not get current pane"}
-
-    first_pane = result.stdout.strip()
-    panes = [first_pane]
-
-    # Create the grid by splitting
-    # Strategy: First create all rows, then split each row into columns
-
-    # Step 1: Create rows by vertical splits
-    current_pane = first_pane
-    for row in range(1, rows):
-        split_result = split_pane(
-            direction="vertical",
-            target=current_pane,
-            start_dir=start_dir
-        )
-        if "error" in split_result:
-            return split_result
-        # The new pane becomes the bottom, we stay at top for next split
-        panes.append(split_result["pane_id"])
-
-    # Step 2: Split each row into columns
-    # We need to track which panes are "row starters"
-    row_panes = [first_pane] + [p for p in panes[1:]]  # First pane of each row
-
-    final_panes = []
-    for row_idx, row_pane in enumerate(row_panes[:rows]):
-        row_result = [row_pane]
-        current = row_pane
-
-        for col in range(1, cols):
-            split_result = split_pane(
-                direction="horizontal",
-                target=current,
-                start_dir=start_dir
-            )
-            if "error" in split_result:
-                return split_result
-            row_result.append(split_result["pane_id"])
-            current = split_result["pane_id"]
-
-        final_panes.extend(row_result)
-
-    # Apply even layout
-    layout_name = "tiled"
-    if rows == 1:
-        layout_name = "even-horizontal"
-    elif cols == 1:
-        layout_name = "even-vertical"
-
-    subprocess.run(
-        ["tmux", "select-layout", "-t", target or ".", layout_name],
-        capture_output=True
-    )
-
-    return {
-        "layout": layout,
-        "panes": final_panes[:total_panes],
-        "count": len(final_panes[:total_panes])
-    }
 
 
 @mcp.tool()
@@ -842,83 +713,13 @@ async def spawn_worker_in_pane(
     Returns:
         Dict with worker info
     """
-    project_path = Path(project_dir).expanduser().resolve()
-    worktree_path = project_path / ".worktrees" / issue_id
-    branch_name = f"feature/{issue_id}"
-
-    # 1. Create worktree if it doesn't exist
-    if not worktree_path.exists():
-        worktree_path.parent.mkdir(parents=True, exist_ok=True)
-
-        result = subprocess.run(
-            ["git", "-C", str(project_path), "branch", "--list", branch_name],
-            capture_output=True, text=True
-        )
-
-        if result.stdout.strip():
-            subprocess.run(
-                ["git", "-C", str(project_path), "worktree", "add",
-                 str(worktree_path), branch_name],
-                check=True
-            )
-        else:
-            subprocess.run(
-                ["git", "-C", str(project_path), "worktree", "add",
-                 "-b", branch_name, str(worktree_path)],
-                check=True
-            )
-
-    # 2. Change to worktree directory in the pane
-    subprocess.run(
-        ["tmux", "send-keys", "-t", pane_id, f"cd {worktree_path}", "Enter"],
-        check=True
+    return spawn_worker_in_pane_impl(
+        pane_id=pane_id,
+        issue_id=issue_id,
+        project_dir=project_dir,
+        profile_cmd=profile_cmd,
+        inject_context=inject_context,
     )
-    await asyncio.sleep(0.3)
-
-    # 3. Launch Claude/Codex
-    subprocess.run(
-        ["tmux", "send-keys", "-t", pane_id, profile_cmd, "Enter"],
-        check=True
-    )
-
-    # 4. Wait for Claude to boot
-    await asyncio.sleep(4)
-
-    # 5. Inject context if requested
-    context_text = ""
-    if inject_context:
-        try:
-            result = subprocess.run(
-                ["bd", "show", issue_id, "--format", "json"],
-                capture_output=True, text=True,
-                cwd=str(project_path),
-                env={**os.environ, "BEADS_WORKING_DIR": str(project_path)}
-            )
-            if result.returncode == 0:
-                issue = json.loads(result.stdout)
-                context_text = f"""Fix beads issue {issue_id}: "{issue.get('title', 'Unknown')}"
-
-{issue.get('description', '')}
-
-When done:
-1. Run tests/build to verify
-2. Commit your changes
-3. Run: bd close {issue_id} --reason "Brief description of fix"
-"""
-        except Exception:
-            context_text = f"Work on issue {issue_id}. When done: bd close {issue_id}"
-
-    # 6. Send the keys
-    if context_text:
-        await send_keys(pane_id, context_text)
-
-    return {
-        "pane_id": pane_id,
-        "issue_id": issue_id,
-        "worktree": str(worktree_path),
-        "branch": branch_name,
-        "context_injected": bool(context_text)
-    }
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1481,29 +1282,13 @@ def resize_pane(
     Returns:
         Confirmation message
     """
-    args = ["tmux", "resize-pane", "-t", pane_id]
-
-    if width is not None:
-        args.extend(["-x", str(width)])
-    if height is not None:
-        args.extend(["-y", str(height)])
-    if adjust_x is not None:
-        if adjust_x > 0:
-            args.extend(["-R", str(adjust_x)])
-        else:
-            args.extend(["-L", str(abs(adjust_x))])
-    if adjust_y is not None:
-        if adjust_y > 0:
-            args.extend(["-D", str(adjust_y)])
-        else:
-            args.extend(["-U", str(abs(adjust_y))])
-
-    result = subprocess.run(args, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        return f"Failed to resize: {result.stderr.strip()}"
-
-    return f"Resized pane: {pane_id}"
+    return resize_pane_impl(
+        pane_id,
+        width=width,
+        height=height,
+        adjust_x=adjust_x,
+        adjust_y=adjust_y,
+    )
 
 
 @mcp.tool()
@@ -1520,15 +1305,7 @@ def zoom_pane(pane_id: str) -> str:
     Returns:
         Confirmation message
     """
-    result = subprocess.run(
-        ["tmux", "resize-pane", "-t", pane_id, "-Z"],
-        capture_output=True, text=True
-    )
-
-    if result.returncode != 0:
-        return f"Failed to toggle zoom: {result.stderr.strip()}"
-
-    return f"Toggled zoom for pane: {pane_id}"
+    return zoom_pane_impl(pane_id)
 
 
 @mcp.tool()
@@ -1551,27 +1328,7 @@ def apply_layout(
     Returns:
         Confirmation message
     """
-    valid_layouts = [
-        "tiled", "even-horizontal", "even-vertical",
-        "main-horizontal", "main-vertical"
-    ]
-
-    if layout not in valid_layouts:
-        return f"Invalid layout. Valid options: {', '.join(valid_layouts)}"
-
-    args = ["tmux", "select-layout"]
-
-    if target:
-        args.extend(["-t", target])
-
-    args.append(layout)
-
-    result = subprocess.run(args, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        return f"Failed to apply layout: {result.stderr.strip()}"
-
-    return f"Applied layout: {layout}"
+    return apply_layout_impl(layout, target=target)
 
 
 @mcp.tool()
@@ -1587,21 +1344,7 @@ def rebalance_panes(target: Optional[str] = None) -> str:
     Returns:
         Confirmation message with pane count
     """
-    # Get pane count first
-    args = ["tmux", "list-panes"]
-    if target:
-        args.extend(["-t", target])
-
-    result = subprocess.run(args, capture_output=True, text=True)
-    pane_count = len(result.stdout.strip().split("\n")) if result.stdout.strip() else 0
-
-    # Apply tiled layout
-    apply_result = apply_layout("tiled", target)
-
-    if "Failed" in apply_result:
-        return apply_result
-
-    return f"Rebalanced {pane_count} panes with tiled layout"
+    return rebalance_panes_impl(target=target)
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -63,13 +63,21 @@ cfg_voice() {
     printf '%s' "$v"
 }
 
-# Self-gate: honor voice.enabled=false from canonical config, and the
-# CLAUDE_AUDIO=0 env fallback. Direct invocations (e.g. from scripts that
-# don't check audio_is_enabled themselves) must not bypass the toggle.
-if CFG_ENABLED=$(cfg_voice enabled); then
-    [[ "$CFG_ENABLED" == "false" ]] && exit 0
+# Self-gate: honor voice.enabled from canonical config; fall back to
+# CLAUDE_AUDIO only when voice.enabled is absent. Mirror state-tracker.sh's
+# audio_is_enabled precisely — jq's // treats `false` as missing, so use
+# has() to distinguish absence from explicit false.
+if [[ -f "$CONDUCTOR_CONFIG" ]] && command -v jq >/dev/null 2>&1; then
+    _cfg_present=$(jq -r 'if (.voice // {}) | has("enabled") then "1" else "0" end' "$CONDUCTOR_CONFIG" 2>/dev/null || echo "0")
+    if [[ "$_cfg_present" == "1" ]]; then
+        _cfg_enabled=$(jq -r '.voice.enabled' "$CONDUCTOR_CONFIG" 2>/dev/null || echo "false")
+        [[ "$_cfg_enabled" == "true" ]] || exit 0
+    else
+        [[ "${CLAUDE_AUDIO:-0}" == "1" ]] || exit 0
+    fi
+else
+    [[ "${CLAUDE_AUDIO:-0}" == "1" ]] || exit 0
 fi
-[[ "${CLAUDE_AUDIO:-}" == "0" ]] && exit 0
 
 # Apply config with env var overrides.
 # Voice precedence: canonical voice.default -> CLAUDE_VOICE env -> per-session random

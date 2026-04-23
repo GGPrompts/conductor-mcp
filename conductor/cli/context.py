@@ -57,6 +57,13 @@ def context_cmd(target: str, as_json: bool) -> None:
         die(msg)
         return
 
+    if "error" in info:
+        if as_json:
+            emit_json({"ok": False, "error": info["error"]})
+            raise SystemExit(1)
+        die(info["error"])
+        return
+
     emit(info, json=as_json, fields=_CONTEXT_FIELDS)
 
 

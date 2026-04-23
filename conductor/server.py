@@ -70,14 +70,14 @@ mcp = FastMCP("conductor")
 # ───────────────────────────────────────────────────────────────
 # Shim tools — prefer `cm` CLI (cm-aax.9)
 # ───────────────────────────────────────────────────────────────
-# The following 28 @mcp.tool registrations are thin shims delegating to
+# The following 29 @mcp.tool registrations are thin shims delegating to
 # conductor.core.*_impl helpers. The canonical surface for these verbs is
 # the `cm` CLI — MCP shims stay registered during soak for backward
 # compatibility and will be removed in a future cleanup. The 5 primitives
 # that remain MCP-first are: spawn_worker, smart_spawn, smart_spawn_wave,
 # wait_for_signal, send_signal.
 #
-# Fire-and-forget shims (22, from cm-aax.5/.6/.7):
+# Fire-and-forget shims (23, from cm-aax.5/.6/.7):
 #   send_keys, speak, kill_worker, kill_pane, focus_pane, show_popup,
 #   show_status_popup, create_session, create_window, split_pane,
 #   create_grid, spawn_worker_in_pane, resize_pane, zoom_pane,

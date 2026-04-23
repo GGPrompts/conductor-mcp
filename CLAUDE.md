@@ -23,7 +23,7 @@ Conductor exposes two surfaces over the same `conductor.core`: the `conductor-mc
 - **Both surfaces call `conductor.core`** — zero logic duplication. `conductor.protocol` defines shared TypedDicts so CLI `--json` matches MCP return shapes field-for-field.
 - **Every shared-surface name must appear in both registries.** A parity test (cm-aax.3) enforces that rename/drift fails loud.
 
-## Tools (34 registered: 28 shims delegating to `cm` CLI + 5 primitives + 1 speak shim)
+## Tools (34 registered: 29 shims delegating to `cm` CLI + 5 primitives)
 
 Canonical surface for most verbs is the **`cm` CLI** — the MCP server keeps 28
 thin shims registered during soak for backward compatibility (cm-aax.9). For

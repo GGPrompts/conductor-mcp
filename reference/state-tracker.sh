@@ -12,6 +12,9 @@ STATE_DIR="/tmp/claude-code-state"
 DEBUG_DIR="$STATE_DIR/debug"
 SUBAGENT_DIR="$STATE_DIR/subagents"
 mkdir -p "$STATE_DIR" "$DEBUG_DIR" "$SUBAGENT_DIR"
+# Predictable /tmp paths — tighten perms to prevent symlink / pre-populate
+# attacks against cache-warning.json and cache-alert-*.marker writes.
+chmod 700 "$STATE_DIR" "$DEBUG_DIR" "$SUBAGENT_DIR" 2>/dev/null || true
 
 # Get tmux pane ID if running in tmux
 TMUX_PANE="${TMUX_PANE:-none}"
@@ -62,6 +65,7 @@ decrement_subagent_count() {
 
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 HOOK_TYPE="${1:-unknown}"
+RUN_CACHE_HEALTH=0
 
 # ═══════════════════════════════════════════════════════════════
 # AUDIO ENABLED CHECK (cm-y7t)
@@ -136,12 +140,10 @@ check_cache_health() {
     # False-positive guard: need at least 8 total assistant entries.
     [[ "$total_assistants" -ge 8 ]] || return 0
 
-    # Last 5 entries
+    # Last 5 entries. The `total_assistants -ge 8` guard above guarantees
+    # tail -n 5 returns exactly 5 lines, so no extra count check needed.
     local last5
     last5=$(printf '%s\n' "$usage_tsv" | tail -n 5)
-    local count_lines
-    count_lines=$(printf '%s\n' "$last5" | wc -l)
-    [[ "$count_lines" -eq 5 ]] || return 0
 
     # Pull the single last entry (for recovery detection regardless of size).
     local last_read last_creation
@@ -207,6 +209,9 @@ case "$HOOK_TYPE" in
         STATUS="idle"
         CURRENT_TOOL=""
         DETAILS='{"event":"session_started"}'
+        # Cache audio_is_enabled once per invocation — config can't change
+        # mid-hook, and each call spawns 2 jq processes.
+        AUDIO_ENABLED=0; audio_is_enabled && AUDIO_ENABLED=1
         echo "0" > "$SUBAGENT_COUNT_FILE"
         (
             active_panes=$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null | sed 's/[^a-zA-Z0-9_-]/_/g' || echo "")
@@ -233,7 +238,7 @@ case "$HOOK_TYPE" in
             done
             find "$DEBUG_DIR" -name "*.json" -mmin +60 -delete 2>/dev/null || true
         ) &
-        if audio_is_enabled; then
+        if [[ "$AUDIO_ENABLED" -eq 1 ]]; then
             SESSION_NAME="${CLAUDE_SESSION_NAME:-Claude}"
             "$SCRIPT_DIR/audio-announcer.sh" session-start "$SESSION_NAME" &
         fi
@@ -250,7 +255,10 @@ case "$HOOK_TYPE" in
         TOOL_ARGS_STR=$(echo "$STDIN_DATA" | jq -c '.tool_input // .input // .parameters // {}' 2>/dev/null || echo '{}')
         DETAILS=$(jq -n --arg tool "$CURRENT_TOOL" --arg args "$TOOL_ARGS_STR" '{event:"tool_starting",tool:$tool,args:($args|fromjson)}' 2>/dev/null || echo '{"event":"tool_starting"}')
         if [[ "$CURRENT_TOOL" == "Task" ]]; then increment_subagent_count; fi
-        if audio_is_enabled; then
+        # Cache audio_is_enabled once per invocation — config can't change
+        # mid-hook, and each call spawns 2 jq processes.
+        AUDIO_ENABLED=0; audio_is_enabled && AUDIO_ENABLED=1
+        if [[ "$AUDIO_ENABLED" -eq 1 ]]; then
             TOOL_DETAIL=""
             case "$CURRENT_TOOL" in
                 Read|Write|Edit) TOOL_DETAIL=$(echo "$STDIN_DATA" | jq -r '.tool_input.file_path // .input.file_path // ""' 2>/dev/null | xargs basename 2>/dev/null || echo "") ;;
@@ -269,13 +277,19 @@ case "$HOOK_TYPE" in
         DETAILS=$(jq -n --arg tool "$CURRENT_TOOL" --arg args "$TOOL_ARGS_STR" '{event:"tool_completed",tool:$tool,args:($args|fromjson)}' 2>/dev/null || echo '{"event":"tool_completed"}')
         # cm-8k0s: cache-health observer runs once per post-tool. Silent on
         # any missing inputs; cannot break the hook (1s timeout budget).
-        check_cache_health || true
+        # Deferred until AFTER the state file write — jq on a large JSONL
+        # can be slow enough that the hook framework kills us before the
+        # state file is updated for this turn.
+        RUN_CACHE_HEALTH=1
         ;;
     stop)
         STATUS="awaiting_input"
         CURRENT_TOOL=""
         DETAILS='{"event":"claude_stopped","waiting_for_user":true}'
-        if audio_is_enabled; then
+        # Cache audio_is_enabled once per invocation — config can't change
+        # mid-hook, and each call spawns 2 jq processes.
+        AUDIO_ENABLED=0; audio_is_enabled && AUDIO_ENABLED=1
+        if [[ "$AUDIO_ENABLED" -eq 1 ]]; then
             SESSION_NAME="${CLAUDE_SESSION_NAME:-Claude}"
             "$SCRIPT_DIR/audio-announcer.sh" stop "$SESSION_NAME" &
         fi
@@ -396,6 +410,15 @@ if [[ "$SESSION_ID" =~ ^[a-f0-9]{12}$ ]] && [[ "$TMUX_PANE" != "none" && -n "$TM
     PANE_ID=$(echo "$TMUX_PANE" | sed 's/[^a-zA-Z0-9_-]/_/g')
     PANE_STATE_FILE="$STATE_DIR/${PANE_ID}.json"
     echo "$STATE_JSON" > "$PANE_STATE_FILE"
+fi
+
+# cm-8k0s: run cache-health observer AFTER the state file is written. jq on a
+# large JSONL can be slow enough that the hook framework's 1s timeout kills
+# us; deferring ensures the state file is at least up-to-date for this turn.
+# Kept inline (not backgrounded) to avoid cache-warning.json write races
+# across concurrent hook invocations.
+if [[ "$RUN_CACHE_HEALTH" -eq 1 ]]; then
+    check_cache_health || true
 fi
 
 exit 0

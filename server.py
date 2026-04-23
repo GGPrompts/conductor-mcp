@@ -35,9 +35,10 @@ LEGACY_AUDIO_SHIM = Path.home() / ".claude" / "audio-config.sh"
 # Defaults (used in function signatures)
 DEFAULT_DELAY_MS = 800
 
-# Ensure directories exist
-STATE_DIR.mkdir(exist_ok=True)
-AUDIO_CACHE_DIR.mkdir(exist_ok=True)
+# Ensure directories exist (predictable /tmp paths — tighten perms to prevent
+# symlink / pre-populate attacks against md5 cache keys).
+STATE_DIR.mkdir(mode=0o700, exist_ok=True, parents=True)
+AUDIO_CACHE_DIR.mkdir(mode=0o700, exist_ok=True, parents=True)
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Available edge-tts voices (good variety for distinguishing workers)

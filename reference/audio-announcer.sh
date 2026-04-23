@@ -58,10 +58,18 @@ cfg_voice() {
     [[ -f "$CONDUCTOR_CONFIG" ]] || return 1
     command -v jq >/dev/null 2>&1 || return 1
     local v
-    v=$(jq -r ".voice.${key} // empty" "$CONDUCTOR_CONFIG" 2>/dev/null || echo "")
+    v=$(jq -r --arg k "$key" '.voice[$k] // empty' "$CONDUCTOR_CONFIG" 2>/dev/null || echo "")
     [[ -n "$v" ]] || return 1
     printf '%s' "$v"
 }
+
+# Self-gate: honor voice.enabled=false from canonical config, and the
+# CLAUDE_AUDIO=0 env fallback. Direct invocations (e.g. from scripts that
+# don't check audio_is_enabled themselves) must not bypass the toggle.
+if CFG_ENABLED=$(cfg_voice enabled); then
+    [[ "$CFG_ENABLED" == "false" ]] && exit 0
+fi
+[[ "${CLAUDE_AUDIO:-}" == "0" ]] && exit 0
 
 # Apply config with env var overrides.
 # Voice precedence: canonical voice.default -> CLAUDE_VOICE env -> per-session random
@@ -91,6 +99,7 @@ CLIPS_DIR="${CUSTOM_CLIPS_DIR:-}"
 AUDIO_LOCK="/tmp/claude-audio.lock"
 DEBUG_LOG="/tmp/audio-debug.log"
 mkdir -p "$AUDIO_DIR"
+chmod 700 "$AUDIO_DIR" 2>/dev/null || true
 
 # ═══════════════════════════════════════════════════════════════
 # AUDIO MUTEX (prevent simultaneous announcements from subagents)
@@ -162,8 +171,8 @@ play_clip() {
 speak() {
     local text="$1"
     local sync_mode="${2:-async}"
-    # Include voice + rate in cache key
-    local cache_key=$(echo "${VOICE}:${RATE}:${PITCH}:${text}" | md5sum | cut -d' ' -f1)
+    # Include voice, rate, pitch, volume in cache key (must mirror server.py)
+    local cache_key=$(echo "${VOICE}:${RATE}:${PITCH}:${VOLUME}:${text}" | md5sum | cut -d' ' -f1)
     local cache_file="$AUDIO_DIR/${cache_key}.mp3"
 
     echo "[$(date)] speak() text='$text' sync=$sync_mode cache=$cache_file" >> "$DEBUG_LOG"

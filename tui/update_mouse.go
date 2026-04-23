@@ -183,6 +183,16 @@ func (m model) handleWheelUp(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Settings tab: scroll the settings cursor, not the sessions list.
+	if m.focusState == FocusSessions && m.sessionsTab == "settings" {
+		if m.settingsCursor > 0 {
+			m.settingsCursor--
+			m.updateSettingsContent()
+			m.adjustSettingsScrollToCursor()
+		}
+		return m, nil
+	}
+
 	// Otherwise, scroll the sessions list
 	return m.moveUp()
 }
@@ -224,6 +234,16 @@ func (m model) handleWheelDown(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			position = " [BOTTOM]"
 		}
 		m.statusMsg = fmt.Sprintf("Preview: Line %d/%d%s", m.previewScrollOffset+1, m.previewTotalLines, position)
+		return m, nil
+	}
+
+	// Settings tab: scroll the settings cursor, not the sessions list.
+	if m.focusState == FocusSessions && m.sessionsTab == "settings" {
+		if m.settingsCursor < m.settingsSectionCursorCount()-1 {
+			m.settingsCursor++
+			m.updateSettingsContent()
+			m.adjustSettingsScrollToCursor()
+		}
 		return m, nil
 	}
 

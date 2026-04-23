@@ -23,23 +23,38 @@ Conductor exposes two surfaces over the same `conductor.core`: the `conductor-mc
 - **Both surfaces call `conductor.core`** — zero logic duplication. `conductor.protocol` defines shared TypedDicts so CLI `--json` matches MCP return shapes field-for-field.
 - **Every shared-surface name must appear in both registries.** A parity test (cm-aax.3) enforces that rename/drift fails loud.
 
-## Tools (34 total)
+## Tools (34 registered: 28 shims delegating to `cm` CLI + 5 primitives + 1 speak shim)
+
+Canonical surface for most verbs is the **`cm` CLI** — the MCP server keeps 28
+thin shims registered during soak for backward compatibility (cm-aax.9). For
+fire-and-forget and polling ops, prefer `cm <verb>` (TSV by default, `--json`
+for structured). Shims delegate 1:1 to `conductor.core.*_impl` — behaviour is
+identical to the CLI. The five MCP-first primitives are:
+
+- `spawn_worker`, `smart_spawn`, `smart_spawn_wave` — orchestration / async
+- `wait_for_signal`, `send_signal` — synchronization channels
+
+Everything else listed below (send_keys, list_workers, speak, etc.) is a shim
+and should be invoked as `cm <verb>` by callers that can. Future cleanup will
+drop the shim registrations once soak is complete.
+
+Run `cm --help` for the CLI verb tree; run `cm <group> --help` for details.
 
 User-facing configuration — voice, profiles, layout/timing — has moved to the conductor-tui Settings panel (cm-3gw). Open conductor-tui (`Ctrl+b o` in tmux, or run `conductor-tui`) and cycle the top panel with `1` until the Settings tab is active. Canonical config: `~/.config/conductor/config.json`.
 
 ### Core Worker Tools (9)
 
-| Tool | Purpose |
-|------|---------|
-| `send_keys` | Send keys to tmux session, optionally submit with Enter |
-| `spawn_worker` | Create worktree + tmux session + inject beads context |
-| `speak` | TTS announcements via edge-tts |
-| `kill_worker` | Terminate worker session |
-| `list_workers` | List active tmux sessions |
-| `get_worker_status` | Read Claude state from /tmp/claude-code-state |
-| `capture_worker_output` | Get recent terminal output |
-| `get_context_percent` | Parse context % from Claude Code status line |
-| `get_workers_with_capacity` | Find workers below context threshold for reuse |
+| MCP tool (shim) | Canonical CLI | Purpose |
+|-----------------|---------------|---------|
+| `send_keys` | `cm send` | Send keys to tmux session, optionally submit with Enter |
+| `spawn_worker` | — (MCP primitive) | Create worktree + tmux session + inject beads context |
+| `speak` | `cm speak` | TTS announcements via edge-tts |
+| `kill_worker` | `cm kill worker` | Terminate worker session |
+| `list_workers` | `cm list workers` | List active tmux sessions |
+| `get_worker_status` | `cm worker status <session>` | Read Claude state from /tmp/claude-code-state |
+| `capture_worker_output` | `cm capture <session>` | Get recent terminal output |
+| `get_context_percent` | `cm context <target>` | Parse context % from Claude Code status line |
+| `get_workers_with_capacity` | `cm worker capacity` | Find workers below context threshold for reuse |
 
 ### Smart Spawn (2)
 
@@ -57,14 +72,14 @@ User-facing configuration — voice, profiles, layout/timing — has moved to th
 
 ### Pane Management (6)
 
-| Tool | Purpose |
-|------|---------|
-| `split_pane` | Split current/target pane horizontally or vertically |
-| `create_grid` | Create NxM grid layout (e.g., "2x2", "4x1") |
-| `list_panes` | List all panes with status info |
-| `focus_pane` | Switch focus to specific pane |
-| `kill_pane` | Kill a specific pane |
-| `spawn_worker_in_pane` | Launch worker in existing pane |
+| MCP tool (shim) | Canonical CLI | Purpose |
+|-----------------|---------------|---------|
+| `split_pane` | `cm split` | Split current/target pane horizontally or vertically |
+| `create_grid` | `cm grid` | Create NxM grid layout (e.g., "2x2", "4x1") |
+| `list_panes` | `cm list panes` | List all panes with status info |
+| `focus_pane` | `cm focus` | Switch focus to specific pane |
+| `kill_pane` | `cm kill pane` | Kill a specific pane |
+| `spawn_worker_in_pane` | `cm spawn in-pane` | Launch worker in existing pane |
 
 ### Real-time Monitoring (3)
 

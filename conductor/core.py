@@ -1567,3 +1567,147 @@ def get_config_impl() -> dict:
     distinct name so the cm-aax.5/.6/.7 ``*_impl`` convention holds.
     """
     return load_config()
+
+
+# ═══════════════════════════════════════════════════════════════
+# Polling IMPLs (cm-aax.9)
+# ═══════════════════════════════════════════════════════════════
+#
+# Shared by MCP polling tools and the `cm list` / `cm worker` / `cm
+# context` / `cm capture` CLI verbs. Polling tools are the biggest
+# cache-footprint win — callers should prefer the CLI path when possible;
+# MCP shims stay registered during soak (see conductor.server comments).
+
+
+def list_workers_impl() -> list[dict]:
+    """
+    List active tmux sessions that look like workers. Shared by MCP
+    `list_workers` and `cm list workers`. Thin wrapper around the existing
+    `_list_workers_core` helper so the return shape matches the MCP tool
+    field-for-field (conductor.protocol.WorkerInfo).
+    """
+    return _list_workers_core()
+
+
+def list_panes_impl(session: Optional[str] = None) -> list[dict]:
+    """
+    List panes in a session or current window. Shared by MCP `list_panes`
+    and `cm list panes`. Thin wrapper around `list_panes_core` kept under
+    the `*_impl` naming convention so the surface-parity machinery stays
+    uniform.
+    """
+    return list_panes_core(session)
+
+
+def get_worker_status_impl(session: str) -> Optional[dict]:
+    """
+    Read the Claude state file for SESSION. Shared by MCP
+    `get_worker_status` and `cm worker status`. Returns the parsed JSON
+    dict, or None when the state file is missing / unreadable / corrupt —
+    matches the prior MCP return shape.
+    """
+    state_file = STATE_DIR / f"{session}.json"
+
+    if not state_file.exists():
+        return None
+
+    try:
+        with open(state_file) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return None
+
+
+def get_context_percent_impl(target: str) -> dict:
+    """
+    Get the context usage percentage for a Claude Code session. Shared by
+    MCP `get_context_percent` and `cm context`.
+
+    Tries the state-file source first (accurate, updated by the status-line
+    script); falls back to scraping the visible terminal status line.
+    Return shape matches `conductor.protocol.ContextPercent`.
+    """
+    # Try state files first (more accurate).
+    result = _get_context_from_state_files(target)
+    if result is not None:
+        return result
+
+    # Fall back to terminal scraping.
+    return _get_context_from_terminal(target)
+
+
+def get_workers_with_capacity_impl(threshold: int = 60) -> dict:
+    """
+    Find workers below the context threshold. Shared by MCP
+    `get_workers_with_capacity` and `cm worker capacity`.
+
+    Iterates over `list_workers_impl()`, queries each via
+    `get_context_percent_impl()`, and partitions into has-capacity vs
+    at-capacity buckets. Workers whose context percent can't be determined
+    are treated as at-capacity to stay on the safe side.
+    """
+    workers = list_workers_impl()
+
+    if not workers:
+        return {
+            "workers_with_capacity": [],
+            "workers_at_capacity": [],
+            "total_workers": 0,
+            "available_capacity": 0,
+        }
+
+    with_capacity: list[dict] = []
+    at_capacity: list[dict] = []
+
+    for w in workers:
+        session = w["session"]
+        ctx_info = get_context_percent_impl(session)
+
+        worker_info = {
+            "session": session,
+            "context_percent": ctx_info.get("context_percent"),
+            "claude_status": w.get("claude_status"),
+            "attached": w.get("attached", False),
+        }
+
+        if ctx_info.get("context_percent") is not None:
+            if ctx_info["context_percent"] < threshold:
+                worker_info["remaining_capacity"] = (
+                    threshold - ctx_info["context_percent"]
+                )
+                with_capacity.append(worker_info)
+            else:
+                at_capacity.append(worker_info)
+        else:
+            # Can't determine context, assume at capacity to be safe.
+            at_capacity.append(worker_info)
+
+    return {
+        "workers_with_capacity": sorted(
+            with_capacity, key=lambda x: x.get("context_percent", 100)
+        ),
+        "workers_at_capacity": at_capacity,
+        "total_workers": len(workers),
+        "available_for_tasks": len(with_capacity),
+        "threshold": threshold,
+    }
+
+
+def capture_worker_output_impl(session: str, lines: int = 50) -> str:
+    """
+    Capture recent output from a worker's tmux pane. Shared by MCP
+    `capture_worker_output` and `cm capture`.
+
+    Returns the captured stdout text, or a "Failed to capture: ..." error
+    string on tmux failure (matches prior MCP return shape — the MCP tool
+    returned the error string inline rather than raising).
+    """
+    result = subprocess.run(
+        ["tmux", "capture-pane", "-t", session, "-p", "-S", f"-{lines}"],
+        capture_output=True, text=True,
+    )
+
+    if result.returncode != 0:
+        return f"Failed to capture: {result.stderr}"
+
+    return result.stdout

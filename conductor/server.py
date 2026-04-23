@@ -21,23 +21,24 @@ from mcp.server.fastmcp import FastMCP
 
 from conductor.core import (
     DEFAULT_DELAY_MS,
-    STATE_DIR,
-    WATCH_DIR,
     _find_best_split,
-    _get_context_from_state_files,
-    _get_context_from_terminal,
     apply_layout_impl,
+    capture_worker_output_impl,
     clear_hook_impl,
     create_grid_impl,
     create_session_impl,
     create_window_impl,
     focus_pane_impl,
     get_config_impl,
+    get_context_percent_impl,
+    get_worker_status_impl,
     get_worker_voice,
+    get_workers_with_capacity_impl,
     kill_pane_impl,
     kill_worker_impl,
     list_hooks_impl,
-    list_panes_core,
+    list_panes_impl,
+    list_workers_impl,
     load_config,
     read_watch_impl,
     rebalance_panes_impl,
@@ -65,6 +66,26 @@ from conductor.protocol import (
 
 # Initialize MCP server
 mcp = FastMCP("conductor")
+
+# ───────────────────────────────────────────────────────────────
+# Shim tools — prefer `cm` CLI (cm-aax.9)
+# ───────────────────────────────────────────────────────────────
+# The following 28 @mcp.tool registrations are thin shims delegating to
+# conductor.core.*_impl helpers. The canonical surface for these verbs is
+# the `cm` CLI — MCP shims stay registered during soak for backward
+# compatibility and will be removed in a future cleanup. The 5 primitives
+# that remain MCP-first are: spawn_worker, smart_spawn, smart_spawn_wave,
+# wait_for_signal, send_signal.
+#
+# Fire-and-forget shims (22, from cm-aax.5/.6/.7):
+#   send_keys, speak, kill_worker, kill_pane, focus_pane, show_popup,
+#   show_status_popup, create_session, create_window, split_pane,
+#   create_grid, spawn_worker_in_pane, resize_pane, zoom_pane,
+#   apply_layout, rebalance_panes, watch_pane, stop_watch, read_watch,
+#   set_pane_hook, clear_hook, list_hooks, get_config
+# Polling shims (6, from cm-aax.9):
+#   list_workers, list_panes, get_worker_status, get_context_percent,
+#   get_workers_with_capacity, capture_worker_output
 
 
 @mcp.tool()
@@ -250,53 +271,18 @@ def kill_worker(
 @mcp.tool()
 def list_workers() -> list[dict]:
     """
-    List active tmux sessions that look like workers.
+    List active tmux sessions that look like workers. Prefer `cm list workers`.
 
     Returns:
         List of worker session info
     """
-    result = subprocess.run(
-        ["tmux", "list-sessions", "-F",
-         "#{session_name}|#{session_created}|#{session_windows}|#{session_attached}"],
-        capture_output=True, text=True
-    )
-
-    if result.returncode != 0:
-        return []
-
-    workers = []
-    for line in result.stdout.strip().split("\n"):
-        if not line:
-            continue
-        parts = line.split("|")
-        if len(parts) >= 4:
-            name = parts[0]
-            # Get status from state file if available
-            status = None
-            state_file = STATE_DIR / f"{name}.json"
-            if state_file.exists():
-                try:
-                    with open(state_file) as f:
-                        state = json.load(f)
-                        status = state.get("status")
-                except (json.JSONDecodeError, IOError):
-                    pass  # State file corrupt or unreadable, continue without status
-
-            workers.append({
-                "session": name,
-                "created": parts[1],
-                "windows": int(parts[2]),
-                "attached": parts[3] == "1",
-                "claude_status": status
-            })
-
-    return workers
+    return list_workers_impl()
 
 
 @mcp.tool()
 def get_worker_status(session: str) -> Optional[dict]:
     """
-    Get Claude's current status for a worker session.
+    Get Claude's current status for a worker session. Prefer `cm worker status <session>`.
 
     Reads from /tmp/claude-code-state/{session}.json written by Claude hooks.
 
@@ -306,136 +292,14 @@ def get_worker_status(session: str) -> Optional[dict]:
     Returns:
         Status dict or None if not found
     """
-    state_file = STATE_DIR / f"{session}.json"
-
-    if not state_file.exists():
-        return None
-
-    try:
-        with open(state_file) as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError):
-        return None
-
-
-def _get_context_from_state_files(target: str) -> dict | None:
-    """
-    Try to get context percentage from state files written by the statusline script.
-
-    Returns None if data unavailable or stale (>30 seconds old).
-    """
-    import time
-
-    # First, get the pane ID for this target
-    result = subprocess.run(
-        ["tmux", "display-message", "-t", target, "-p", "#{pane_id}"],
-        capture_output=True, text=True
-    )
-
-    if result.returncode != 0:
-        return None
-
-    pane_id = result.stdout.strip()
-    # Sanitize pane ID same way as state-tracker.sh
-    sanitized_pane_id = pane_id.replace("%", "_").replace(":", "_")
-
-    state_file = STATE_DIR / f"{sanitized_pane_id}.json"
-
-    if not state_file.exists():
-        return None
-
-    try:
-        with open(state_file) as f:
-            state = json.load(f)
-
-        # Get the claude_session_id that links to the context file
-        claude_session_id = state.get("claude_session_id")
-        if not claude_session_id:
-            return None
-
-        # Read the context file
-        context_file = STATE_DIR / f"{claude_session_id}-context.json"
-        if not context_file.exists():
-            return None
-
-        # Check if context file is fresh (within 30 seconds)
-        file_age = time.time() - context_file.stat().st_mtime
-        if file_age > 30:
-            return None
-
-        with open(context_file) as f:
-            context_data = json.load(f)
-
-        context_pct = context_data.get("context_pct")
-        if context_pct is None:
-            return None
-
-        # Extract additional token info if available
-        context_window = context_data.get("context_window", {})
-
-        return {
-            "target": target,
-            "context_percent": int(context_pct),
-            "source": "state_file",
-            "status": "ok",
-            "context_window_size": context_window.get("context_window_size"),
-            "total_input_tokens": context_window.get("total_input_tokens"),
-            "total_output_tokens": context_window.get("total_output_tokens"),
-            "file_age_seconds": round(file_age, 1)
-        }
-    except (json.JSONDecodeError, IOError, KeyError):
-        return None
-
-
-def _get_context_from_terminal(target: str) -> dict:
-    """
-    Fallback: scrape context percentage from terminal status line.
-    """
-    import re
-
-    # Capture the last few lines to find the status line
-    result = subprocess.run(
-        ["tmux", "capture-pane", "-t", target, "-p", "-S", "-5"],
-        capture_output=True, text=True
-    )
-
-    if result.returncode != 0:
-        return {
-            "error": f"Failed to capture pane: {result.stderr.strip()}",
-            "context_percent": None
-        }
-
-    lines = result.stdout.strip().split("\n")
-
-    # Look for the status line pattern with "% ctx"
-    pattern = r"(\d+)%\s*ctx"
-
-    for line in reversed(lines):  # Start from bottom
-        match = re.search(pattern, line)
-        if match:
-            percent = int(match.group(1))
-            return {
-                "target": target,
-                "context_percent": percent,
-                "source": "terminal_scrape",
-                "raw_line": line.strip(),
-                "status": "ok"
-            }
-
-    return {
-        "target": target,
-        "context_percent": None,
-        "source": "terminal_scrape",
-        "raw_line": lines[-1] if lines else "",
-        "status": "not_found",
-        "hint": "Status line not visible - Claude may be processing or pane too small"
-    }
+    return get_worker_status_impl(session)
 
 
 @mcp.tool()
 def get_context_percent(target: str) -> dict:
     """
     Get the context usage percentage from a Claude Code session.
+    Prefer `cm context <target>`.
 
     Attempts to read from state files first (accurate, from statusline script),
     then falls back to parsing the visible terminal status line.
@@ -447,19 +311,14 @@ def get_context_percent(target: str) -> dict:
         Dict with context_percent (int 0-100), source ("state_file" or "terminal_scrape"),
         and additional token info when available from state files.
     """
-    # Try state files first (more accurate)
-    result = _get_context_from_state_files(target)
-    if result is not None:
-        return result
-
-    # Fall back to terminal scraping
-    return _get_context_from_terminal(target)
+    return get_context_percent_impl(target)
 
 
 @mcp.tool()
 def get_workers_with_capacity(threshold: int = 60) -> dict:
     """
     Find workers that have remaining context capacity for more tasks.
+    Prefer `cm worker capacity --threshold N`.
 
     Checks all active workers and returns those below the context threshold.
     Useful for deciding whether to reuse existing workers vs spawn new ones.
@@ -470,53 +329,13 @@ def get_workers_with_capacity(threshold: int = 60) -> dict:
     Returns:
         Dict with workers_with_capacity list and summary stats
     """
-    workers = list_workers()
-
-    if not workers:
-        return {
-            "workers_with_capacity": [],
-            "workers_at_capacity": [],
-            "total_workers": 0,
-            "available_capacity": 0
-        }
-
-    with_capacity = []
-    at_capacity = []
-
-    for w in workers:
-        session = w["session"]
-        ctx_info = get_context_percent(session)
-
-        worker_info = {
-            "session": session,
-            "context_percent": ctx_info.get("context_percent"),
-            "claude_status": w.get("claude_status"),
-            "attached": w.get("attached", False)
-        }
-
-        if ctx_info.get("context_percent") is not None:
-            if ctx_info["context_percent"] < threshold:
-                worker_info["remaining_capacity"] = threshold - ctx_info["context_percent"]
-                with_capacity.append(worker_info)
-            else:
-                at_capacity.append(worker_info)
-        else:
-            # Can't determine context, assume at capacity to be safe
-            at_capacity.append(worker_info)
-
-    return {
-        "workers_with_capacity": sorted(with_capacity, key=lambda x: x.get("context_percent", 100)),
-        "workers_at_capacity": at_capacity,
-        "total_workers": len(workers),
-        "available_for_tasks": len(with_capacity),
-        "threshold": threshold
-    }
+    return get_workers_with_capacity_impl(threshold=threshold)
 
 
 @mcp.tool()
 def capture_worker_output(session: str, lines: int = 50) -> str:
     """
-    Capture recent output from a worker's tmux pane.
+    Capture recent output from a worker's tmux pane. Prefer `cm capture <session>`.
 
     Args:
         session: tmux session name
@@ -525,15 +344,7 @@ def capture_worker_output(session: str, lines: int = 50) -> str:
     Returns:
         Captured terminal output
     """
-    result = subprocess.run(
-        ["tmux", "capture-pane", "-t", session, "-p", "-S", f"-{lines}"],
-        capture_output=True, text=True
-    )
-
-    if result.returncode != 0:
-        return f"Failed to capture: {result.stderr}"
-
-    return result.stdout
+    return capture_worker_output_impl(session, lines=lines)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -658,7 +469,7 @@ def create_grid(
 @mcp.tool()
 def list_panes(session: Optional[str] = None) -> list[dict]:
     """
-    List all panes in a session or current window.
+    List all panes in a session or current window. Prefer `cm list panes`.
 
     Args:
         session: Session name (default: current session, all windows)
@@ -666,7 +477,7 @@ def list_panes(session: Optional[str] = None) -> list[dict]:
     Returns:
         List of pane info dicts (see conductor.protocol.PaneInfo)
     """
-    return list_panes_core(session)
+    return list_panes_impl(session)
 
 
 @mcp.tool()
@@ -1310,12 +1121,14 @@ Steps:
 2. Collect issue IDs (up to max_concurrent_workers)
 3. Use smart_spawn_wave(issue_ids="ID1,ID2,...", project_dir="{project_dir}") to spawn all at once
    - Workers appear as splits in the current window, overflowing to new tabs when needed
-4. Announce each spawn with speak()
-5. Report which workers were spawned and where (split vs new window)
+4. Announce each spawn with `cm speak "..."`
+5. Inspect layout with `cm list panes` (TSV) and report which workers were spawned and where (split vs new window)
 
-Use the conductor MCP tools: smart_spawn_wave, speak, list_panes
+MCP primitives: smart_spawn_wave (orchestration). Everything else — speak,
+list_panes, kill_worker, send_keys, etc. — is canonical on the `cm` CLI.
+Run `cm --help` for the full verb list.
 
-Note: For manual grid control, create_grid() + spawn_worker_in_pane() still work."""
+Note: For manual grid control, use `cm grid 2x2` + `cm spawn in-pane <pane_id> <issue_id> <project_dir>`."""
         }
     ]
 
@@ -1333,10 +1146,11 @@ def prompt_worker_status() -> list[dict]:
             "content": """Check the status of all active workers.
 
 Steps:
-1. Use list_workers() to get all tmux sessions
-2. For each worker, use get_worker_status() to get Claude's state
-3. Summarize: how many idle, processing, using tools
-4. Announce summary with speak()
+1. Run `cm list workers` (TSV: session, created, windows, attached, claude_status)
+2. For each session, run `cm worker status <session> --json` for Claude's state
+3. Run `cm context <session>` to get context % per worker
+4. Summarize: how many idle, processing, using tools
+5. Announce summary with `cm speak "..."`
 
 Report format:
 - Worker name | Status | Current tool | Context %"""
@@ -1364,14 +1178,17 @@ Phase 1 - Planning:
 Phase 2 - Spawning:
 1. Use smart_spawn_wave(issue_ids="ID1,ID2,...", project_dir="{project_dir}") to spawn all workers
    - Workers appear as visible splits in the current session, overflowing to new tabs
-2. Announce "Wave started with N workers"
+2. Announce "Wave started with N workers" with `cm speak "..."`
 
 Phase 3 - Monitoring:
-1. Periodically check worker status with list_panes()
+1. Periodically check worker status with `cm list panes` and `cm worker capacity`
 2. When a worker shows idle status, check if issue is closed
-3. Announce completions with speak()
+3. Announce completions with `cm speak "..."`
 
-Use conductor MCP tools throughout. Be the conductor!"""
+Orchestration primitives stay on MCP: smart_spawn_wave, wait_for_signal,
+send_signal. Polling and fire-and-forget verbs (list, speak, send, kill,
+capture, context, worker status, ...) are canonical on the `cm` CLI —
+run `cm --help` for the full verb list. Be the conductor!"""
         }
     ]
 
@@ -1386,7 +1203,7 @@ def prompt_announce(message: str) -> list[dict]:
     return [
         {
             "role": "user",
-            "content": f"Use the speak() tool to announce: {message}"
+            "content": f"Run `cm speak \"{message}\"` to announce it via TTS."
         }
     ]
 
@@ -1406,7 +1223,7 @@ def prompt_options() -> list[dict]:
 Open it with: Ctrl+b o (tmux popup), then press 1 until the top panel cycles to the Settings tab.
 From there you can pick voices, manage profiles, and tweak layout/timing.
 
-For a read-only peek at what the MCP server sees right now, call get_config()."""
+For a read-only peek at the current config, run `cm config get` (TSV) or `cm config get --json`."""
         }
     ]
 
@@ -1423,9 +1240,9 @@ def prompt_kill_all() -> list[dict]:
             "role": "user",
             "content": """Kill all active worker sessions.
 
-1. Call list_workers() to see active sessions
-2. For each worker, call kill_worker(session)
-3. Announce "All workers terminated" with speak()
+1. Run `cm list workers` to see active sessions (TSV: session in col 1)
+2. For each worker, run `cm kill worker <session>`
+3. Announce "All workers terminated" with `cm speak "..."`
 4. Report how many workers were killed
 
 Note: voice assignments are managed by the user in the conductor-tui Settings panel."""

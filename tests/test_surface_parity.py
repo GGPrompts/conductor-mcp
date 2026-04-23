@@ -67,6 +67,13 @@ SHARED_SURFACE: list[str] = [
     "clear_hook",
     "list_hooks",
     "get_config",
+    # cm-aax.9: polling verbs migrated to cm CLI.
+    "list_workers",
+    "list_panes",
+    "get_worker_status",
+    "get_workers_with_capacity",
+    "get_context_percent",
+    "capture_worker_output",
 ]
 
 # MCP name -> CLI path (space-separated). Missing entries mean the CLI
@@ -98,6 +105,15 @@ CLI_PATH_MAP: dict[str, str] = {
     "clear_hook": "hook clear",
     "list_hooks": "hook list",
     "get_config": "config get",
+    # cm-aax.9: polling verbs migrated to cm CLI.
+    "list_workers": "list workers",
+    "list_panes": "list panes",
+    "get_worker_status": "worker status",
+    "get_workers_with_capacity": "worker capacity",
+    # get_context_percent -> cm context (flat, no mapping needed by rule,
+    # but explicit mapping is clearer when the MCP name differs semantically).
+    "get_context_percent": "context",
+    "capture_worker_output": "capture",
 }
 
 

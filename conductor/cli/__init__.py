@@ -53,12 +53,15 @@ def main() -> None:
 # Each import registers a verb on `cli` as a side-effect. Keep this list
 # alphabetised; add a new line for every new verb module. Noqa on each
 # import because the module-level decorator is the whole point.
+from conductor.cli import capture as _capture  # noqa: F401  (registers capture)
 from conductor.cli import config as _config  # noqa: F401  (registers config group)
+from conductor.cli import context as _context  # noqa: F401  (registers context)
 from conductor.cli import focus as _focus  # noqa: F401  (registers focus)
 from conductor.cli import grid as _grid  # noqa: F401  (registers grid)
 from conductor.cli import hook as _hook  # noqa: F401  (registers hook group)
 from conductor.cli import kill as _kill  # noqa: F401  (registers kill group)
 from conductor.cli import layout as _layout  # noqa: F401  (registers layout group)
+from conductor.cli import list as _list  # noqa: F401  (registers list group)
 from conductor.cli import popup as _popup  # noqa: F401  (registers popup group)
 from conductor.cli import resize as _resize  # noqa: F401  (registers resize)
 from conductor.cli import send as _send  # noqa: F401  (registers send)
@@ -68,6 +71,7 @@ from conductor.cli import speak as _speak  # noqa: F401  (registers speak)
 from conductor.cli import split as _split  # noqa: F401  (registers split)
 from conductor.cli import watch as _watch  # noqa: F401  (registers watch group)
 from conductor.cli import window as _window  # noqa: F401  (registers window group)
+from conductor.cli import worker as _worker  # noqa: F401  (registers worker group)
 from conductor.cli import zoom as _zoom  # noqa: F401  (registers zoom)
 
 

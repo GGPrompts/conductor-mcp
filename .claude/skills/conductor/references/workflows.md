@@ -1,16 +1,18 @@
 # Common Conductor Workflows
 
+> Prefer `cm` via Bash for everything except the spawn/signal primitives. Every `cm` verb accepts `--json` for structured output.
+
 ## 1. Spawn a Wave of Workers
 
 Spawn workers for all ready beads issues, visible in the current session:
 
 ```
-1. bd ready                          # Find ready issues
-2. smart_spawn_wave(                 # Spawn all at once
+1. bd ready                          # Find ready issues (Bash)
+2. smart_spawn_wave(                 # Spawn all at once (MCP primitive)
      issue_ids="BD-abc,BD-def",
      project_dir="/path/to/project"
    )
-3. speak("Wave started")            # Announce
+3. cm speak "Wave started"          # Announce (CLI)
 ```
 
 Workers auto-split panes, overflowing to new tabs when needed.
@@ -41,17 +43,17 @@ smart_spawn(
 Check all workers and their context usage:
 
 ```
-1. list_workers()                    # Get active sessions
-2. get_context_percent("BD-abc")     # Check context per worker
-3. get_workers_with_capacity(60)     # Find workers that can take more work
-4. capture_worker_output("BD-abc")   # See what a worker is doing
+cm list workers                    # Get active sessions (TSV)
+cm context BD-abc                  # Check context per worker
+cm worker capacity --threshold 60  # Find workers that can take more work
+cm capture BD-abc --lines 50       # See what a worker is doing
 ```
 
 For continuous monitoring:
 ```
-1. watch_pane("%5")                  # Start streaming output
-2. read_watch("%5", lines=20)        # Check periodically
-3. stop_watch("%5")                  # Stop when done
+cm watch start %5                  # Start streaming output
+cm watch read %5 --lines 20        # Check periodically
+cm watch stop %5                   # Stop when done
 ```
 
 ## 4. Reuse Workers with Capacity
@@ -59,9 +61,8 @@ For continuous monitoring:
 Instead of spawning new workers, reuse ones with remaining context:
 
 ```
-1. get_workers_with_capacity(60)     # Find workers below 60% context
-2. send_keys("BD-abc",              # Send new task to existing worker
-     "Now work on BD-def: ...")
+cm worker capacity --threshold 60  # Find workers below 60% context
+cm send BD-abc "Now work on BD-def: ..."  # Send new task to existing worker
 ```
 
 ## 5. Kill All Workers
@@ -69,23 +70,21 @@ Instead of spawning new workers, reuse ones with remaining context:
 Clean shutdown of all workers:
 
 ```
-1. list_workers()                    # See what's running
-2. kill_worker("BD-abc")             # Kill each session
-3. kill_worker("BD-def",             # Kill + clean worktree
-     cleanup_worktree=True,
-     project_dir="/path/to/project")
-4. reset_voice_assignments()         # Free voice pool
+cm list workers                    # See what's running
+cm kill worker BD-abc              # Kill each session
+cm kill worker BD-def \
+  --cleanup-worktree \
+  --project-dir /path/to/project   # Kill + clean worktree
 ```
+
+Voice-assignment reset lives in the conductor-tui Settings panel (cm-3gw).
 
 ## 6. Custom Grid Layout
 
 For manual control over worker placement:
 
 ```
-1. create_grid(layout="2x2")        # Create 4 panes
-2. spawn_worker_in_pane(             # Populate each pane
-     pane_id="%5",
-     issue_id="BD-abc",
-     project_dir="/path/to/project"
-   )
+cm grid 2x2                        # Create 4 panes (CLI)
+cm spawn in-pane %5 BD-abc \
+  --project-dir /path/to/project   # Populate each pane
 ```

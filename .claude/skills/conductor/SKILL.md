@@ -9,6 +9,8 @@ command_name: conductor:help
 
 You are the conductor help system. Present an interactive menu and handle the user's choice.
 
+> **Prefer `cm` CLI over MCP shims.** After cm-aax, 29 of the 34 conductor MCP tools are thin shims over `conductor.core`. Calling them from inside a skill drags the MCP tool definition into the turn's context. Use `cm <verb>` via Bash instead — structured output is available on every verb via `--json`. Only five MCP tools remain canonical: `spawn_worker`, `smart_spawn`, `smart_spawn_wave`, `wait_for_signal`, `send_signal`.
+
 ## Step 1: Show Menu
 
 Use `AskUserQuestion` to present this menu:
@@ -17,7 +19,7 @@ Use `AskUserQuestion` to present this menu:
 **Header:** "Help topic"
 **Options:**
 1. **Quick Reference** — "Browse all conductor tools and common workflows"
-2. **Settings** — "View and adjust conductor configuration"
+2. **Settings** — "View current conductor configuration"
 3. **Profiles** — "Manage spawn profiles (claude, codex, gemini, tfe, etc.)"
 4. **Hotkeys** — "tmux keybinding cheat sheet"
 
@@ -33,30 +35,16 @@ Use `AskUserQuestion` to present this menu:
 
 ### Settings
 
-1. Call `get_config()` via MCP to get current configuration
+1. Run `cm config get --json` via Bash to get the current configuration
 2. Present settings in a formatted table:
    - Max workers, default layout, default dir
    - Voice: name, rate, pitch, random per worker
    - Delays: send_keys_ms, claude_boot_s
-3. Use `AskUserQuestion` to ask what they'd like to change:
-   - **Max workers** — "Change concurrent worker limit"
-   - **Voice settings** — "Change TTS voice, speed, or pitch"
-   - **Delays** — "Adjust send_keys or boot timing"
-   - **Default directory** — "Set fallback project directory"
-4. Apply changes with `set_config()`
+3. Tell the user that voice, profiles, delays, and default dir are edited in the conductor-tui Settings panel (cm-3gw): open conductor-tui (`Ctrl+b o` in tmux, or run `conductor-tui`) and cycle the top panel with `1` until the Settings tab is active. Canonical config: `~/.config/conductor/config.json`.
 
 ### Profiles
 
-1. Call `list_profiles()` via MCP to get current profiles
-2. Present profiles in a table: name | command | pinned dir | effective dir
-3. Use `AskUserQuestion` to ask what they'd like to do:
-   - **Add/edit profile** — "Create or update a spawn profile"
-   - **Remove profile** — "Delete an existing profile"
-   - **Set default dir** — "Set global fallback directory for all profiles"
-   - **Test spawn** — "Test a profile with a dry run description"
-4. For add/edit: ask for name, command, and optional pinned dir, then call `add_profile()`
-5. For remove: ask which profile, then call `remove_profile()`
-6. For default dir: ask for path, then call `set_config(default_dir=...)`
+Profile CRUD (add / edit / remove) and the default-dir fallback now live in the conductor-tui Settings panel (cm-3gw). Tell the user: open conductor-tui (`Ctrl+b o` in tmux, or run `conductor-tui`), cycle the top panel with `1` to the Settings tab, and edit profiles there. For a quick read-only view from the CLI, run `cm config get --json | jq .profiles`.
 
 ### Hotkeys
 

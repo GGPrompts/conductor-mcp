@@ -63,6 +63,13 @@ def spawn_group() -> None:
     help="Inject beads issue context after the agent boots.",
 )
 @click.option(
+    "--worktree/--no-worktree",
+    "worktree",
+    default=True,
+    help="Create a .worktrees/<issue_id> worktree + feature branch. "
+         "Use --no-worktree for orchestrators that run on the main checkout.",
+)
+@click.option(
     "--json",
     "as_json",
     is_flag=True,
@@ -75,6 +82,7 @@ def spawn_in_pane_cmd(
     project_dir: str,
     profile_cmd: str,
     inject_context: bool,
+    worktree: bool,
     as_json: bool,
 ) -> None:
     """Implementation of `cm spawn in-pane`."""
@@ -87,6 +95,7 @@ def spawn_in_pane_cmd(
             project_dir=project_dir,
             profile_cmd=profile_cmd,
             inject_context=inject_context,
+            worktree=worktree,
         )
     except Exception as exc:
         msg = f"spawn in-pane failed: {exc}"

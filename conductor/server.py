@@ -118,7 +118,8 @@ async def spawn_worker(
     issue_id: str,
     project_dir: str,
     profile_cmd: str = "claude",
-    inject_context: bool = True
+    inject_context: bool = True,
+    worktree: bool = True
 ) -> dict:
     """
     Spawn a worker: create worktree, tmux session, and optionally inject beads context.
@@ -128,44 +129,54 @@ async def spawn_worker(
         project_dir: Path to the main project directory
         profile_cmd: Command to run (default: "claude")
         inject_context: Whether to inject beads context (default: True)
+        worktree: Create a .worktrees/<issue_id> worktree + feature branch
+            (default: True). Pass False for orchestrators (e.g. gg-execute)
+            that must run on the main checkout and manage their own worktrees.
 
     Returns:
         Dict with session info
     """
     project_path = Path(project_dir).expanduser().resolve()
-    worktree_path = project_path / ".worktrees" / issue_id
-    branch_name = f"feature/{issue_id}"
 
-    # 1. Create worktree if it doesn't exist
-    if not worktree_path.exists():
-        worktree_path.parent.mkdir(parents=True, exist_ok=True)
+    if worktree:
+        worktree_path = project_path / ".worktrees" / issue_id
+        branch_name = f"feature/{issue_id}"
 
-        # Check if branch exists
-        result = subprocess.run(
-            ["git", "-C", str(project_path), "branch", "--list", branch_name],
-            capture_output=True, text=True
-        )
+        # 1. Create worktree if it doesn't exist
+        if not worktree_path.exists():
+            worktree_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if result.stdout.strip():
-            # Branch exists, use it
-            subprocess.run(
-                ["git", "-C", str(project_path), "worktree", "add",
-                 str(worktree_path), branch_name],
-                check=True
+            # Check if branch exists
+            result = subprocess.run(
+                ["git", "-C", str(project_path), "branch", "--list", branch_name],
+                capture_output=True, text=True
             )
-        else:
-            # Create new branch
-            subprocess.run(
-                ["git", "-C", str(project_path), "worktree", "add",
-                 "-b", branch_name, str(worktree_path)],
-                check=True
-            )
+
+            if result.stdout.strip():
+                # Branch exists, use it
+                subprocess.run(
+                    ["git", "-C", str(project_path), "worktree", "add",
+                     str(worktree_path), branch_name],
+                    check=True
+                )
+            else:
+                # Create new branch
+                subprocess.run(
+                    ["git", "-C", str(project_path), "worktree", "add",
+                     "-b", branch_name, str(worktree_path)],
+                    check=True
+                )
+        run_dir = worktree_path
+    else:
+        worktree_path = None
+        branch_name = None
+        run_dir = project_path
 
     # 2. Create tmux session
     session_name = issue_id
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", session_name,
-         "-c", str(worktree_path)],
+         "-c", str(run_dir)],
         check=False  # May fail if session exists
     )
 
@@ -209,7 +220,7 @@ When done:
 
     return {
         "session": session_name,
-        "worktree": str(worktree_path),
+        "worktree": str(worktree_path) if worktree_path else None,
         "branch": branch_name,
         "context_injected": bool(context_text)
     }
@@ -514,7 +525,8 @@ async def spawn_worker_in_pane(
     issue_id: str,
     project_dir: str,
     profile_cmd: str = "claude",
-    inject_context: bool = True
+    inject_context: bool = True,
+    worktree: bool = True
 ) -> dict:
     """
     Spawn a worker in an existing pane (created by split_pane or create_grid).
@@ -527,6 +539,9 @@ async def spawn_worker_in_pane(
         project_dir: Path to the main project directory
         profile_cmd: Command to run (default: "claude")
         inject_context: Whether to inject beads context (default: True)
+        worktree: Create a .worktrees/<issue_id> worktree + feature branch
+            (default: True). Pass False for orchestrators (e.g. gg-execute)
+            that must run on the main checkout and manage their own worktrees.
 
     Returns:
         Dict with worker info
@@ -537,6 +552,7 @@ async def spawn_worker_in_pane(
         project_dir=project_dir,
         profile_cmd=profile_cmd,
         inject_context=inject_context,
+        worktree=worktree,
     )
 
 
@@ -553,7 +569,8 @@ async def smart_spawn(
     target_pane: Optional[str] = None,
     profile: str = "claude",
     profile_cmd: str = "",
-    inject_context: bool = True
+    inject_context: bool = True,
+    worktree: bool = True
 ) -> dict:
     """
     Spawn a worker visibly in the current tmux session by auto-splitting panes.
@@ -574,6 +591,9 @@ async def smart_spawn(
         profile: Profile name from config (default: "claude"). Managed in conductor-tui Settings.
         profile_cmd: Raw command override (backward compat, takes precedence over profile)
         inject_context: Whether to inject beads context (default: True)
+        worktree: Create a .worktrees/<issue_id> worktree + feature branch
+            (default: True). Pass False for orchestrators (e.g. gg-execute)
+            that must run on the main checkout.
 
     Returns:
         Dict with worker info + placement decision
@@ -641,7 +661,8 @@ async def smart_spawn(
         issue_id=issue_id,
         project_dir=effective_dir,
         profile_cmd=effective_cmd,
-        inject_context=inject_context
+        inject_context=inject_context,
+        worktree=worktree
     )
 
     worker_info["placement"] = placement
@@ -656,7 +677,8 @@ async def smart_spawn_wave(
     session: Optional[str] = None,
     profile: str = "claude",
     profile_cmd: str = "",
-    inject_context: bool = True
+    inject_context: bool = True,
+    worktree: bool = True
 ) -> dict:
     """
     Spawn multiple workers visibly, auto-splitting panes as needed.
@@ -671,6 +693,8 @@ async def smart_spawn_wave(
         profile: Profile name from config (default: "claude"). Managed in conductor-tui Settings.
         profile_cmd: Raw command override (backward compat, takes precedence over profile)
         inject_context: Whether to inject beads context (default: True)
+        worktree: Create per-issue worktrees + feature branches (default: True).
+            Pass False to run every worker on the main checkout.
 
     Returns:
         Summary with total/spawned/failed counts and per-worker results
@@ -701,7 +725,8 @@ async def smart_spawn_wave(
             session=session,
             profile=profile,
             profile_cmd=profile_cmd,
-            inject_context=inject_context
+            inject_context=inject_context,
+            worktree=worktree
         )
 
         if "error" in worker_result:

@@ -5,7 +5,7 @@
 | Tool | Purpose |
 |------|---------|
 | `send_keys(session, keys, submit?, delay_ms?)` | Send keys to tmux session, optionally press Enter |
-| `spawn_worker(issue_id, project_dir, profile_cmd?, inject_context?)` | Create detached worktree + tmux session |
+| `spawn_worker(issue_id, project_dir, profile_cmd?, inject_context?, worktree?)` | Create detached worktree + tmux session (`worktree=False` runs on the main checkout, for orchestrators) |
 | `speak(text, voice?, rate?, worker_id?, blocking?, priority?)` | TTS via edge-tts with audio mutex |
 | `kill_worker(session, cleanup_worktree?, project_dir?)` | Kill session + optional worktree cleanup |
 | `list_workers()` | List active tmux sessions with Claude status |
@@ -39,7 +39,7 @@
 | `list_panes(session?)` | List all panes with size, command, status |
 | `focus_pane(pane_id)` | Switch focus to specific pane |
 | `kill_pane(pane_id)` | Kill a specific pane |
-| `spawn_worker_in_pane(pane_id, issue_id, project_dir, ...)` | Launch worker in existing pane |
+| `spawn_worker_in_pane(pane_id, issue_id, project_dir, ..., worktree?)` | Launch worker in existing pane (`worktree=False` runs on the main checkout, for orchestrators) |
 
 ## Real-time Monitoring
 

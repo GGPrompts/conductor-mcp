@@ -9,7 +9,7 @@
 | Purpose | CLI | MCP shim |
 |---------|-----|----------|
 | Send keys to tmux session, optionally press Enter | `cm send <session> "<keys>" [--no-submit] [--delay-ms N]` | `send_keys` |
-| Create detached worktree + tmux session | — | `spawn_worker` **(MCP)** |
+| Create detached worktree + tmux session | — | `spawn_worker` **(MCP)** (`worktree=False` runs on the main checkout, for orchestrators) |
 | TTS via edge-tts with audio mutex | `cm speak "<text>" [--voice ...] [--rate ...] [--worker-id ...]` | `speak` |
 | Kill session + optional worktree cleanup | `cm kill worker <session> [--cleanup-worktree --project-dir ...]` | `kill_worker` |
 | List active tmux sessions with Claude status | `cm list workers` | `list_workers` |
@@ -43,7 +43,7 @@
 | List all panes with size, command, status | `cm list panes [--session ...]` | `list_panes` |
 | Switch focus to specific pane | `cm focus <pane_id>` | `focus_pane` |
 | Kill a specific pane | `cm kill pane <pane_id>` | `kill_pane` |
-| Launch worker in existing pane | `cm spawn in-pane <pane_id> <issue_id> --project-dir ...` | `spawn_worker_in_pane` |
+| Launch worker in existing pane | `cm spawn in-pane <pane_id> <issue_id> --project-dir ... [--no-worktree]` | `spawn_worker_in_pane` (`--no-worktree`/`worktree=False` runs on the main checkout, for orchestrators) |
 
 ## Real-time Monitoring
 

@@ -1174,6 +1174,7 @@ def spawn_worker_in_pane_impl(
     inject_context: bool = True,
     boot_delay_s: float = 4.0,
     cd_delay_s: float = 0.3,
+    worktree: bool = True,
 ) -> dict:
     """
     Spawn a worker in an existing pane. Synchronous equivalent of the
@@ -1182,36 +1183,47 @@ def spawn_worker_in_pane_impl(
     Shared by MCP `spawn_worker_in_pane` and `cm spawn in-pane`.
     Returns a dict describing the spawn on success, or {"error": "..."}
     on failure to create the worktree.
+
+    worktree=False skips worktree/branch creation and runs the agent on the
+    main checkout — for orchestrators (e.g. gg-execute) that manage their
+    own per-issue worktrees.
     """
     project_path = Path(project_dir).expanduser().resolve()
-    worktree_path = project_path / ".worktrees" / issue_id
-    branch_name = f"feature/{issue_id}"
 
-    # 1. Create worktree if needed
-    if not worktree_path.exists():
-        worktree_path.parent.mkdir(parents=True, exist_ok=True)
+    if worktree:
+        worktree_path = project_path / ".worktrees" / issue_id
+        branch_name = f"feature/{issue_id}"
 
-        branch_result = subprocess.run(
-            ["git", "-C", str(project_path), "branch", "--list", branch_name],
-            capture_output=True, text=True,
-        )
+        # 1. Create worktree if needed
+        if not worktree_path.exists():
+            worktree_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if branch_result.stdout.strip():
-            subprocess.run(
-                ["git", "-C", str(project_path), "worktree", "add",
-                 str(worktree_path), branch_name],
-                check=True,
-            )
-        else:
-            subprocess.run(
-                ["git", "-C", str(project_path), "worktree", "add",
-                 "-b", branch_name, str(worktree_path)],
-                check=True,
+            branch_result = subprocess.run(
+                ["git", "-C", str(project_path), "branch", "--list", branch_name],
+                capture_output=True, text=True,
             )
 
-    # 2. cd into worktree in the pane
+            if branch_result.stdout.strip():
+                subprocess.run(
+                    ["git", "-C", str(project_path), "worktree", "add",
+                     str(worktree_path), branch_name],
+                    check=True,
+                )
+            else:
+                subprocess.run(
+                    ["git", "-C", str(project_path), "worktree", "add",
+                     "-b", branch_name, str(worktree_path)],
+                    check=True,
+                )
+        run_dir = worktree_path
+    else:
+        worktree_path = None
+        branch_name = None
+        run_dir = project_path
+
+    # 2. cd into the run directory in the pane
     subprocess.run(
-        ["tmux", "send-keys", "-t", pane_id, f"cd {worktree_path}", "Enter"],
+        ["tmux", "send-keys", "-t", pane_id, f"cd {run_dir}", "Enter"],
         check=True,
     )
     time.sleep(cd_delay_s)
@@ -1256,7 +1268,7 @@ When done:
     return {
         "pane_id": pane_id,
         "issue_id": issue_id,
-        "worktree": str(worktree_path),
+        "worktree": str(worktree_path) if worktree_path else None,
         "branch": branch_name,
         "context_injected": bool(context_text),
     }

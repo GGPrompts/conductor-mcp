@@ -27,6 +27,7 @@ type ClaudeState struct {
 	WorkingDir      string                 `json:"working_dir"`
 	LastUpdated     string                 `json:"last_updated"`
 	TmuxPane        string                 `json:"tmux_pane"`
+	TmuxSocket      string                 `json:"tmux_socket"` // tmux server socket name; pane ids repeat across servers
 	PID             int                    `json:"pid"`
 	HookType        string                 `json:"hook_type"`
 	Details         map[string]interface{} `json:"details"`
@@ -112,7 +113,9 @@ func findStateByPane(paneID string) (*ClaudeState, error) {
 			continue
 		}
 
-		if state.TmuxPane == paneID {
+		// Pane ids repeat across tmux servers (a private "tmux -L exec" server
+		// also has a %0), so a state from another socket is never this pane.
+		if state.TmuxPane == paneID && sameTmuxSocket(state.TmuxSocket) {
 			// Return state even if stale - let the display layer handle staleness
 			return state, nil
 		}
@@ -140,7 +143,7 @@ func findStateByWorkingDir(workingDir string) (*ClaudeState, error) {
 			continue
 		}
 
-		if state.WorkingDir == workingDir {
+		if state.WorkingDir == workingDir && sameTmuxSocket(state.TmuxSocket) {
 			// Return state even if stale - let the display layer handle staleness
 			return state, nil
 		}
@@ -398,4 +401,29 @@ func formatTimeAgo(timestamp string) string {
 	} else {
 		return fmt.Sprintf("%d hours ago", int(duration.Hours()))
 	}
+}
+
+// currentTmuxSocket is the socket name of the server this TUI runs under
+// ($TMUX is "<socket path>,<pid>,<index>"), or "default" outside tmux.
+func currentTmuxSocket() string {
+	env := os.Getenv("TMUX")
+	if env == "" {
+		return "default"
+	}
+	path := strings.SplitN(env, ",", 2)[0]
+	name := filepath.Base(path)
+	if name == "" || name == "." {
+		return "default"
+	}
+	return name
+}
+
+// sameTmuxSocket reports whether a state's recorded socket is this TUI's.
+// A state written before the socket was recorded has an empty or "none"
+// socket and is treated as the default server, which is what it was.
+func sameTmuxSocket(recorded string) bool {
+	if recorded == "" || recorded == "none" {
+		recorded = "default"
+	}
+	return recorded == currentTmuxSocket()
 }

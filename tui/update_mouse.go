@@ -74,7 +74,6 @@ func (m model) handleLeftClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // Uses TFE-style approach: calculate relative Y position from pane area start
 func (m model) handleUnifiedPanelClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	x, y := msg.X, msg.Y
-	_ = x // Not needed for vertical stack detection
 
 	// Header and footer line counts (matches TFE approach)
 	headerLines := 0
@@ -110,6 +109,10 @@ func (m model) handleUnifiedPanelClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		// Maximized: sessions takes all remaining space
 		sessionsHeight = remaining
 		previewHeight = 0
+	} else if m.isSideBySide() {
+		// Side by side: both share the rows above the command panel
+		sessionsHeight = remaining
+		previewHeight = 0
 	} else {
 		// Normal: split equally
 		sessionsHeight = remaining / 2
@@ -126,8 +129,19 @@ func (m model) handleUnifiedPanelClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// Determine which panel was clicked (TFE-style simple comparison)
 	oldFocus := m.focusState
 
+	// Side by side: the list is left of the gap column, the preview right of it
+	inPreviewColumn := false
+	if m.isSideBySide() {
+		listWidth, _ := m.sideBySideWidths()
+		inPreviewColumn = x >= listWidth
+	}
+
 	var focusName string
-	if paneY < sessionsTotal {
+	if paneY < sessionsTotal && inPreviewColumn {
+		// Click in Preview panel (right column)
+		m.focusState = FocusPreview
+		focusName = "Preview"
+	} else if paneY < sessionsTotal {
 		// Click in Sessions panel
 		m.focusState = FocusSessions
 		if m.sessionsTab == "templates" {

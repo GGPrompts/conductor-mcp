@@ -181,6 +181,47 @@ func (m model) calculateDualPaneLayout() (int, int) {
 	return leftWidth, rightWidth
 }
 
+// sideBySideMinWidth is the terminal width at or above which the top panel
+// (sessions/templates/settings) and the preview sit side by side instead of
+// stacked. At 120 columns the list gets 47 and the preview 72, enough for a
+// session row and a readable pane line; the 80% popup reaches it from about
+// 150 terminal columns (a laptop or wider screen).
+const sideBySideMinWidth = 120
+
+// isSideBySide reports whether the list and preview render side by side.
+// Watcher mode and the maximized (preview hidden) state keep the stacked path.
+func (m model) isSideBySide() bool {
+	return m.width >= sideBySideMinWidth && !m.watcherMode && !m.sessionsMaximized
+}
+
+// sideBySideWidths returns the list and preview panel widths (borders
+// included) for the side by side layout: list about 40%, one-column gap.
+func (m model) sideBySideWidths() (listWidth, previewWidth int) {
+	contentWidth, _ := m.calculateLayout()
+	listWidth = (contentWidth - 1) * 2 / 5
+	previewWidth = contentWidth - 1 - listWidth
+	return listWidth, previewWidth
+}
+
+// listPanelWidth returns the rendered width of the top (list) panel.
+func (m model) listPanelWidth() int {
+	if m.isSideBySide() {
+		w, _ := m.sideBySideWidths()
+		return w
+	}
+	contentWidth, _ := m.calculateLayout()
+	return contentWidth
+}
+
+// previewPanelWidth returns the rendered width of the preview panel.
+func (m model) previewPanelWidth() int {
+	if m.isSideBySide() {
+		_, w := m.sideBySideWidths()
+		return w
+	}
+	return m.width
+}
+
 // Helper functions for common operations
 
 // visualWidth calculates the visual width of a string, accounting for ANSI codes and emojis
@@ -510,8 +551,7 @@ func (m *model) renderSessionTableView() []string {
 	var lines []string
 
 	// Calculate available width (content width minus padding and borders)
-	contentWidth, _ := m.calculateLayout()
-	availableWidth := contentWidth - 6 // Account for borders and padding
+	availableWidth := m.listPanelWidth() - 6 // Account for borders and padding
 
 	// Apply session filter to get only filtered sessions
 	filteredSessions := []TmuxSession{}
@@ -1116,7 +1156,7 @@ func (m *model) updatePreviewContent() {
 	var lines []string
 
 	// Calculate max text width for footer panel (account for borders)
-	maxTextWidth := m.width - 2
+	maxTextWidth := m.previewPanelWidth() - 2
 	if maxTextWidth < 1 {
 		maxTextWidth = 1
 	}
@@ -1375,7 +1415,7 @@ func (m *model) updateTemplatePreview() {
 	var allLines []string
 
 	// Calculate max text width
-	maxTextWidth := m.width - 2
+	maxTextWidth := m.previewPanelWidth() - 2
 	if maxTextWidth < 1 {
 		maxTextWidth = 1
 	}
@@ -1579,6 +1619,9 @@ func (m model) calculateAdaptivePanelHeights(availableHeight int) (sessionsHeigh
 		if m.sessionsMaximized {
 			return 10, 0, 5
 		}
+		if m.isSideBySide() {
+			return 10, 10, 5
+		}
 		return 5, 5, 5
 	}
 
@@ -1593,6 +1636,11 @@ func (m model) calculateAdaptivePanelHeights(availableHeight int) (sessionsHeigh
 		sessionsHeight = remaining
 		previewHeight = 0
 		return sessionsHeight, previewHeight, commandHeight
+	}
+
+	if m.isSideBySide() {
+		// Side by side: list and preview both take all remaining height
+		return remaining, remaining, commandHeight
 	}
 
 	// Normal mode: equal weight split (1:1 ratio)

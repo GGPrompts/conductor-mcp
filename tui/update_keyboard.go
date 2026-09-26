@@ -1081,6 +1081,11 @@ func (m model) handleMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.statusMsg = "Sessions restored"
 		}
+		// Wide terminals: panel widths change (side by side vs full width)
+		if m.width >= sideBySideMinWidth {
+			m.updateSessionsContent()
+			m.updatePreviewContent()
+		}
 		return m, nil
 
 	// Focus cycling (Tab / Shift+Tab)

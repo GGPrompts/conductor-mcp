@@ -440,11 +440,17 @@ func (m model) renderUnifiedView() string {
 		topPanelContent = m.sessionsContent
 		topPanelName = "sessions"
 	}
-	sessionsPanel := m.renderDynamicPanel(topPanelName, contentWidth, sessionsHeight, topPanelContent)
+	sessionsPanel := m.renderDynamicPanel(topPanelName, m.listPanelWidth(), sessionsHeight, topPanelContent)
 	commandPanel := m.renderDynamicPanel("command", contentWidth, commandHeight, m.commandContent)
 
-	// Stack panels vertically (skip preview when maximized)
-	if m.sessionsMaximized {
+	// Wide terminals: list left, preview right (one-column gap), command below
+	if m.isSideBySide() {
+		previewPanel := m.renderDynamicPanel("preview", m.previewPanelWidth(), previewHeight, m.previewContent)
+		gap := strings.TrimSuffix(strings.Repeat(" \n", sessionsHeight), "\n")
+		row := lipgloss.JoinHorizontal(lipgloss.Top, sessionsPanel, gap, previewPanel)
+		sections = append(sections, row, commandPanel)
+	} else if m.sessionsMaximized {
+		// Stack panels vertically (skip preview when maximized)
 		// 2-panel layout: sessions + command (no preview)
 		sections = append(sections, sessionsPanel, commandPanel)
 	} else {

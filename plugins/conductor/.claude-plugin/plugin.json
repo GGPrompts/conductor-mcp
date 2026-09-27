@@ -1,6 +1,6 @@
 {
   "name": "conductor",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Orchestrate Claude Code workers with tmux — spawn, monitor, coordinate, and speak across parallel sessions",
   "author": {
     "name": "GGPrompts"

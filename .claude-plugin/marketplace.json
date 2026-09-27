@@ -12,7 +12,7 @@
       "name": "conductor",
       "source": "./plugins/conductor",
       "description": "MCP server + skills + hooks for orchestrating Claude Code workers via tmux",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": {
         "name": "GGPrompts"
       },

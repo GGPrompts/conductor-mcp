@@ -9,6 +9,8 @@ command_name: conductor:help
 
 You are the conductor help system. Present an interactive menu and handle the user's choice.
 
+> **Prefer `cm` CLI over MCP shims.** After cm-aax, 29 of the 34 conductor MCP tools are thin shims over `conductor.core`. Calling them from inside a skill drags the MCP tool definition into the turn's context. Use `cm <verb>` via Bash instead — structured output is available on every verb via `--json`. Only five MCP tools remain canonical: `spawn_worker`, `smart_spawn`, `smart_spawn_wave`, `wait_for_signal`, `send_signal`.
+
 ## Step 1: Show Menu
 
 Use `AskUserQuestion` to present this menu:
@@ -17,7 +19,7 @@ Use `AskUserQuestion` to present this menu:
 **Header:** "Help topic"
 **Options:**
 1. **Quick Reference** — "Browse all conductor tools and common workflows"
-2. **Settings** — "Where to adjust conductor configuration"
+2. **Settings** — "View current conductor configuration"
 3. **Profiles** — "Where to manage spawn profiles (claude, codex, gemini, tfe, etc.)"
 4. **Hotkeys** — "tmux keybinding cheat sheet"
 
@@ -33,14 +35,15 @@ Use `AskUserQuestion` to present this menu:
 
 ### Settings
 
-Settings (voice, layout, timing) now live in the conductor-tui Settings panel.
-Tell the user:
-
-- Open conductor-tui (`Ctrl+b o` in tmux for the popup, or run `conductor-tui` directly)
-- Press `1` repeatedly in the top panel to cycle: Sessions → Templates → Settings
-- The Settings tab has sections for Voice, Profiles, and Layout/Timing
-
-For a read-only peek at current config, call `get_config()` via MCP.
+1. Run `cm config get --json` via Bash to get the current configuration
+2. Present settings in a formatted table:
+   - Max workers, default layout, default dir
+   - Voice: name, rate, pitch, random per worker
+   - Delays: send_keys_ms, claude_boot_s
+3. Tell the user that settings (voice, layout, timing) are edited in the conductor-tui Settings panel:
+   - Open conductor-tui (`Ctrl+b o` in tmux for the popup, or run `conductor-tui` directly)
+   - Press `1` repeatedly in the top panel to cycle: Sessions → Templates → Settings
+   - The Settings tab has sections for Voice, Profiles, and Layout/Timing
 
 The canonical config lives at `~/.config/conductor/config.json` and is shared by the MCP server and the TUI.
 
@@ -51,6 +54,8 @@ Profiles (claude, codex, gemini, tfe, lazygit, copilot, etc.) are managed from t
 - Open conductor-tui and cycle to the Settings tab (press `1` until the Settings tab is active)
 - Switch to the Profiles sub-section with `Tab`
 - View the list of configured profiles
+
+For a quick read-only view from the CLI, run `cm config get --json | jq .profiles`.
 
 For now, creating/editing profiles is still easiest by editing `~/.config/conductor/config.json` directly (full CRUD in the TUI is a follow-up). Claude continues to consume profiles via `smart_spawn(profile="name")`.
 

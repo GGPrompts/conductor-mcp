@@ -1,21 +1,28 @@
 ---
 name: conductor
 description: >
-  Orchestrate Claude Code workers with tmux. Use when the user asks to spawn workers,
+  Orchestrate AI workers with tmux using the cm CLI and conductor MCP primitives.
+  Use when the user asks to spawn workers,
   manage tmux panes/sessions, coordinate parallel tasks, run multiple AI agents,
   monitor worker progress, or use text-to-speech announcements. Also use when you see
-  conductor MCP tools available (spawn_worker, smart_spawn, send_keys, etc.).
+  conductor MCP primitives available (spawn_worker, smart_spawn, smart_spawn_wave,
+  wait_for_signal, send_signal).
 ---
 
-# Conductor MCP — Orchestration Guide
+# Conductor — Orchestration Guide
 
-You have access to the conductor MCP server for orchestrating Claude Code workers via tmux.
+Prefer `cm` via Bash for worker communication, monitoring, and tmux management.
+Use MCP for the five canonical spawn/signal primitives: `spawn_worker`,
+`smart_spawn`, `smart_spawn_wave`, `wait_for_signal`, and `send_signal`. Other MCP
+tools are compatibility shims; use their CLI equivalents in the reference.
+Every `cm` verb supports `--json` for structured output.
 
 ## Quick Start
 
 The most common workflow is spawning workers for parallel tasks:
 
 ```python
+# MCP primitives
 # Spawn a single worker in a visible pane
 smart_spawn(issue_id="task-name", project_dir="/path/to/project")
 
@@ -26,22 +33,23 @@ smart_spawn_wave(issue_ids="task-1,task-2,task-3", project_dir="/path/to/project
 smart_spawn(issue_id="review", project_dir="/path", profile="codex")
 ```
 
-## Critical Pattern: send_keys
+## Worker Communication: cm send
 
-Always use `send_keys` to communicate with workers. It handles timing automatically:
+Use `cm send` to communicate with workers. It handles the delay before Enter
+automatically and submits by default; use `--no-submit` to type without Enter.
 
-```python
-send_keys(session="task-name", keys="your prompt here")  # submit=True by default
-send_keys(session="task-name", keys="partial text", submit=False)  # type without Enter
+```bash
+cm send task-name "your prompt here"
+cm send task-name "partial text" --no-submit
 ```
 
 ## Monitoring
 
-```python
-list_workers()                          # See all active sessions
-get_context_percent("task-name")        # Check context usage
-get_workers_with_capacity(60)           # Find workers below 60% context
-capture_worker_output("task-name")      # See recent terminal output
+```bash
+cm list workers                    # See all active sessions
+cm context task-name               # Check context usage
+cm worker capacity --threshold 60  # Find workers below 60% context
+cm capture task-name --lines 50     # See recent terminal output
 ```
 
 ## Profiles
@@ -59,7 +67,8 @@ Use `profile="name"` with smart_spawn to launch different tools:
 
 ## Reference
 
-For detailed tool signatures, workflows, and hotkeys, see:
-- `references/tool-reference.md` — all 41 tools with parameters
+For CLI mappings, MCP primitive signatures, workflows, and hotkeys, see:
+
+- `references/tool-reference.md` — canonical CLI commands and MCP primitives with parameters
 - `references/workflows.md` — common multi-step patterns
 - `references/hotkeys.md` — tmux keybinding cheat sheet
